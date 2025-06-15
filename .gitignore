@@ -1,0 +1,7 @@
+# Config files
+/config/database.ini 
+
+# Environment variables
+.env
+
+.cursor/

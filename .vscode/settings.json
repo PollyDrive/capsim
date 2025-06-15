@@ -1,0 +1,6 @@
+{
+    "files.exclude": {
+        "logseq/*": true
+    }
+
+}

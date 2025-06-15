@@ -1,0 +1,30 @@
+initial_population: 100
+simulation_days: 365
+base_income: 1000.0
+income_tax_rate: 0.13
+inflation_rate: 0.02
+random_seed: 42
+
+# Education options
+education:
+  bachelor:
+    cost: 50000.0
+    income_boost: 2000.0
+    duration_days: 365
+  master:
+    cost: 75000.0
+    income_boost: 3000.0
+    duration_days: 730
+    requirements:
+      bachelor_degree: true
+
+# Work options
+work:
+  junior_developer:
+    base_salary: 3000.0
+    experience_required: 0
+  senior_developer:
+    base_salary: 6000.0
+    experience_required: 3
+    requirements:
+      education_level: "bachelor" 
