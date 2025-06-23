@@ -15,8 +15,9 @@ import uuid
 import random
 import time
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from typing import Dict, List, Any
+from faker import Faker
 
 # Configure logging
 logging.basicConfig(
@@ -24,6 +25,9 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Инициализируем Faker для русских имен
+fake = Faker('ru_RU')
 
 
 def check_database_connection():
@@ -93,7 +97,13 @@ def initialize_database():
                 energy_level FLOAT,
                 social_status FLOAT,
                 time_budget INTEGER,
+                financial_capability FLOAT DEFAULT 0.0,
+                trend_receptivity FLOAT DEFAULT 0.0,
                 interests JSONB,
+                first_name VARCHAR(100),
+                last_name VARCHAR(100),
+                date_of_birth DATE,
+                sex VARCHAR(10),
                 created_at TIMESTAMP,
                 updated_at TIMESTAMP
             )
@@ -123,6 +133,19 @@ def initialize_database():
                 trend_id UUID,
                 event_data JSONB,
                 processed_at TIMESTAMP
+            )
+        """)
+        
+        # Create agent_interests table for normalized interest data
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS capsim.agent_interests (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                agent_id UUID REFERENCES capsim.persons(id),
+                simulation_id UUID,
+                profession VARCHAR(50),
+                interest_category VARCHAR(50),
+                interest_value FLOAT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
         
@@ -319,11 +342,15 @@ def create_simulation_with_agents():
                 energy_level = round(random.uniform(*prof_attrs["energy_level"]), 2)
                 time_budget = random.randint(*prof_attrs["time_budget"])
                 
+                # Generate personal data with proper age restrictions
+                personal_data = generate_personal_data(profession)
+                
                 cur.execute("""
                     INSERT INTO capsim.persons 
                     (id, simulation_id, profession, financial_capability, trend_receptivity,
-                     social_status, energy_level, time_budget, interests, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     social_status, energy_level, time_budget, interests, 
+                     first_name, last_name, date_of_birth, sex, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (
                     agent_id,
                     simulation_id,
@@ -334,14 +361,33 @@ def create_simulation_with_agents():
                     energy_level,
                     time_budget,
                     json.dumps(interests),
+                    personal_data['first_name'],
+                    personal_data['last_name'],
+                    personal_data['date_of_birth'],
+                    personal_data['sex'],
                     datetime.now(),
                     datetime.now()
                 ))
                 
                 agents_created += 1
         
+        # Populate agent_interests table from persons data
+        cur.execute("""
+            INSERT INTO capsim.agent_interests (agent_id, simulation_id, profession, interest_category, interest_value)
+            SELECT 
+                p.id,
+                p.simulation_id,
+                p.profession,
+                interest_key,
+                (interest_value::text)::float
+            FROM capsim.persons p,
+                 LATERAL jsonb_each(p.interests) AS interest(interest_key, interest_value)
+            WHERE p.simulation_id = %s
+        """, (simulation_id,))
+        
         conn.commit()
         logger.info(f"✅ Created simulation {simulation_id} with {agents_created} agents")
+        logger.info(f"✅ Populated agent_interests table with normalized data")
         
         cur.close()
         conn.close()
@@ -613,6 +659,65 @@ def show_results(simulation_id: str):
     except Exception as e:
         logger.error(f"❌ Results display failed: {e}")
         return False
+
+
+def generate_personal_data(profession: str) -> Dict[str, Any]:
+    """
+    Генерирует персональные данные с учетом профессиональных ограничений.
+    
+    Возрастные ограничения:
+    - Политик: от 35 лет
+    - Учитель и Доктор: от 30 лет  
+    - Остальные: от 18 лет
+    Максимальный возраст: 80 лет
+    """
+    # Определяем возрастные ограничения
+    min_age = 18
+    if profession == "Politician":
+        min_age = 35
+    elif profession in ["Teacher", "Doctor"]:
+        min_age = 30
+    
+    max_age = 80
+    age = random.randint(min_age, max_age)
+    
+    # Вычисляем дату рождения
+    birth_year = datetime.now().year - age
+    birth_month = random.randint(1, 12)
+    
+    # Определяем максимальный день в месяце
+    if birth_month in [1, 3, 5, 7, 8, 10, 12]:
+        max_day = 31
+    elif birth_month in [4, 6, 9, 11]:
+        max_day = 30
+    else:  # февраль
+        # Проверяем високосный год
+        if (birth_year % 4 == 0 and birth_year % 100 != 0) or (birth_year % 400 == 0):
+            max_day = 29
+        else:
+            max_day = 28
+    
+    birth_day = random.randint(1, max_day)
+    date_of_birth = date(birth_year, birth_month, birth_day)
+    
+    # Случайно выбираем пол
+    sex = random.choice(['male', 'female'])
+    
+    # Генерируем имя и фамилию в соответствии с полом
+    if sex == 'male':
+        first_name = fake.first_name_male()
+        last_name = fake.last_name_male()
+    else:
+        first_name = fake.first_name_female()
+        last_name = fake.last_name_female()
+    
+    return {
+        'first_name': first_name,
+        'last_name': last_name,
+        'date_of_birth': date_of_birth,
+        'sex': sex,
+        'age': age
+    }
 
 
 def main():

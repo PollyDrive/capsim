@@ -1,0 +1,116 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          - name: label
+            values: ["logging=promtail"]
+    relabel_configs:
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)' 
+        target_label: 'container_name'
+      - source_labels: ['__meta_docker_container_log_stream']
+        target_label: 'logstream'
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
+        target_label: 'service_name'
+    pipeline_stages:
+      # Parse JSON logs from CAPSIM app
+      - match:
+          selector: '{service_name="app"}'
+          stages:
+            - json:
+                expressions:
+                  timestamp: timestamp
+                  level: level
+                  message: message
+                  logger: logger
+                  correlation_id: correlation_id
+                  module: module
+                  function: function
+            - timestamp:
+                source: timestamp
+                format: RFC3339
+            - labels:
+                level: level
+                logger: logger
+                module: module
+                function: function
+            - output:
+                source: message
+
+      # Parse SQL INSERT operations
+      - match:
+          selector: '{service_name="app"} |~ "INSERT"'
+          stages:
+            - regex:
+                expression: '.*INSERT INTO (?P<table_name>\w+).*'
+            - labels:
+                operation: "INSERT"
+                table_name: table_name
+            - output:
+                source: message
+
+      # Parse agent-related operations
+      - match:
+          selector: '{service_name="app"} |~ "agent"'
+          stages:
+            - regex:
+                expression: '.*agent[_\s](?P<agent_id>\w+).*'
+            - labels:
+                agent_id: agent_id
+                entity_type: "agent"
+
+      # Parse simulation operations  
+      - match:
+          selector: '{service_name="app"} |~ "simulation"'
+          stages:
+            - regex:
+                expression: '.*simulation[_\s](?P<simulation_id>\w+).*'
+            - labels:
+                simulation_id: simulation_id
+                entity_type: "simulation"
+
+      # Parse database operations from postgres logs
+      - match:
+          selector: '{service_name="postgres"}'
+          stages:
+            - regex:
+                expression: '.*LOG:\s+(?P<log_message>.*)'
+            - regex:
+                expression: '.*statement:\s+(?P<sql_statement>.*)'
+            - labels:
+                log_type: "database"
+            - output:
+                source: sql_statement
+
+  # Scrape container logs with different parsing for each service
+  - job_name: capsim-services
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: capsim-services
+          __path__: /var/log/containers/*.log
+    pipeline_stages:
+      # Generic log parsing
+      - match:
+          selector: '{job="capsim-services"}'
+          stages:
+            - regex:
+                expression: '(?P<timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d+Z)\s+(?P<level>\w+)\s+(?P<message>.*)'
+            - timestamp:
+                source: timestamp
+                format: RFC3339
+            - labels:
+                level: level 

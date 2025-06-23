@@ -18,6 +18,11 @@ services:
       - BASE_RATE=${BASE_RATE:-43.2}
       - BATCH_SIZE=${BATCH_SIZE:-100}
       - ENABLE_METRICS=${ENABLE_METRICS:-true}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENABLE_JSON_LOGS=${ENABLE_JSON_LOGS:-true}
+    labels:
+      logging: "promtail"
+      service.name: "capsim-app"
     depends_on:
       postgres:
         condition: service_healthy
@@ -35,6 +40,9 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres_password}
       - CAPSIM_RW_PASSWORD=${CAPSIM_RW_PASSWORD:-capsim_password}
       - CAPSIM_RO_PASSWORD=${CAPSIM_RO_PASSWORD:-capsim_password}
+    labels:
+      logging: "promtail"
+      service.name: "capsim-postgres"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
@@ -60,19 +68,48 @@ services:
       - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml
       - prometheus_data:/prometheus
 
+  loki:
+    image: grafana/loki:2.9.0
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki_data:/loki
+    networks:
+      - default
+
+  promtail:
+    image: grafana/promtail:2.9.0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - ./monitoring/promtail-config.yml:/etc/promtail/config.yml
+      - promtail_data:/tmp
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+    networks:
+      - default
+
   grafana:
     image: grafana/grafana:9.2.0
     ports:
       - "3000:3000"
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - grafana_data:/var/lib/grafana
       - ./monitoring/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml
+      - ./monitoring/grafana/provisioning.yml:/etc/grafana/provisioning/dashboards/dashboards.yml
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
     depends_on:
       - prometheus
+      - loki
 
 volumes:
   postgres_data:
   prometheus_data:
   grafana_data:
+  loki_data:
+  promtail_data:
