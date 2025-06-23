@@ -1,6 +1,7 @@
 {
     "files.exclude": {
         "logseq/*": true
-    }
+    },
+    "makefile.configureOnOpen": false
 
 }

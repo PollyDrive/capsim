@@ -1,0 +1,47 @@
+groups:
+  - name: capsim_alerts
+    rules:
+      - alert: HighEventLatency
+        expr: histogram_quantile(0.95, capsim_event_latency_ms) > 10
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High event processing latency"
+          description: "P95 event processing latency is {{ $value }}ms, which exceeds 10ms threshold for 3 minutes"
+
+      - alert: QueueOverflow
+        expr: capsim_queue_length > 5000
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Event queue overflow"
+          description: "Event queue size is {{ $value }}, exceeding maximum capacity of 5000 events"
+
+      - alert: BatchCommitErrors
+        expr: increase(capsim_batch_commit_errors_total[5m]) > 5
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High batch commit error rate"
+          description: "{{ $value }} batch commit errors in the last 5 minutes"
+
+      - alert: APIDown
+        expr: up{job="capsim-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "CAPSIM API is down"
+          description: "CAPSIM API has been down for more than 1 minute"
+
+      - alert: DatabaseConnectionLoss
+        expr: capsim_db_connections_active == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Database connection lost"
+          description: "No active database connections detected for 2 minutes" 

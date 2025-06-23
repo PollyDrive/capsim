@@ -1,0 +1,6 @@
+[postgresql]
+host=localhost
+port=5432
+dbname=capsim_db
+user=your_username
+password=your_password 

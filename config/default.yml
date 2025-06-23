@@ -1,0 +1,64 @@
+simulation:
+  # Agent configuration
+  max_agents: 5000
+  default_agents: 1000
+  max_duration_days: 14
+  
+  # Event processing
+  base_event_rate: 43.2  # events per agent per day
+  max_queue_size: 5000
+  
+  # Trend configuration
+  trend_archive_threshold_days: 3
+  trend_topics:
+    - Economic
+    - Health  
+    - Spiritual
+    - Conspiracy
+    - Science
+    - Culture
+    - Sport
+    
+  # Energy and time budgets
+  energy_recovery_hours: 24
+  energy_recovery_threshold: 3.0
+  energy_recovery_amount: 2.0
+  energy_max: 5.0
+
+database:
+  batch_size: 100
+  batch_commit_timeout_minutes: 1
+  retry_attempts: 3
+  retry_backoffs: [1, 2, 4]
+  
+cache:
+  ttl_minutes: 2880  # 2 days simulation time
+  max_size: 10000
+
+performance:
+  target_p95_latency_ms: 10
+  shutdown_timeout_sec: 30
+  
+logging:
+  level: INFO
+  format: json
+  
+professions:
+  time_budgets:
+    Unemployed: 5
+    Student: 3
+    Worker: 2
+    Businessman: 4
+    Developer: 3
+    Doctor: 2
+    Teacher: 3
+    Artist: 4
+    Politician: 4
+    Blogger: 4
+    SpiritualMentor: 4
+    Philosopher: 4
+
+monitoring:
+  enable_metrics: true
+  metrics_port: 9090
+  health_check_port: 8000 

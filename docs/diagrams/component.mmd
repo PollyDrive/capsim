@@ -1,0 +1,128 @@
+classDiagram
+    class SimulationEngine {
+        +List~Person~ agents
+        +float current_time
+        +List~PriorityEvent~ event_queue
+        +Dict~str,Trend~ active_trends
+        +Dict~str,Dict~ affinity_map
+        +initialize()
+        +run_simulation()
+        +process_event(event)
+        +batch_commit_agent_states()
+        +archive_inactive_trends()
+    }
+
+    class Person {
+        +UUID id
+        +str profession
+        +float financial_capability
+        +float trend_receptivity
+        +float social_status
+        +float energy_level
+        +int time_budget
+        +Dict exposure_history
+        +Dict interests
+        +decide_action()
+        +update_state(changes)
+    }
+
+    class Trend {
+        +UUID trend_id
+        +str topic
+        +UUID originator_id
+        +UUID parent_trend_id
+        +datetime timestamp_start
+        +float base_virality_score
+        +str coverage_level
+        +int total_interactions
+        +UUID simulation_id
+    }
+
+    class TrendProcessor {
+        +SimulationEngine engine
+        +create_trend(action)
+        +calculate_virality(agent)
+        +update_trend_stats(trend)
+        +get_trend_affinity(profession, topic)
+        +set_simulation_engine(engine)
+    }
+
+    class PersonInfluence {
+        +SimulationEngine engine
+        +process_trend_influence(trend)
+        +filter_audience(trend)
+        +calculate_influence_changes(agent, trend)
+        +create_update_state_batch()
+        +set_simulation_engine(engine)
+    }
+
+    class DatabaseRepository {
+        +save_agent(person)
+        +save_trend(trend) 
+        +save_event(event)
+        +batch_update_agents(updates)
+        +archive_trend(trend)
+        +get_simulation_stats()
+    }
+
+    class EventQueue {
+        +List~PriorityEvent~ queue
+        +add_event(event)
+        +get_next_event()
+        +is_empty()
+        +size()
+    }
+
+    class BaseEvent {
+        <<abstract>>
+        +int priority
+        +float timestamp
+        +UUID event_id
+        +process(engine)
+    }
+
+    class PublishPostAction {
+        +str topic
+        +UUID agent_id
+        +process(engine)
+    }
+
+    class EnergyRecoveryEvent {
+        +process(engine)
+    }
+
+    class ExternalFactor {
+        +generate_law_events()
+        +generate_weather_events()
+    }
+
+    class God {
+        +generate_system_events()
+        +schedule_daily_events()
+    }
+
+    SimulationEngine --> Person : manages
+    SimulationEngine --> TrendProcessor : uses
+    SimulationEngine --> PersonInfluence : uses
+    SimulationEngine --> DatabaseRepository : uses
+    SimulationEngine --> EventQueue : uses
+    SimulationEngine --> Trend : manages
+
+    TrendProcessor --> SimulationEngine : references
+    PersonInfluence --> SimulationEngine : references
+    
+    Person --> PublishPostAction : creates
+    
+    EventQueue --> BaseEvent : contains
+    BaseEvent <|-- PublishPostAction
+    BaseEvent <|-- EnergyRecoveryEvent
+    
+    ExternalFactor --> SimulationEngine : generates events
+    God --> SimulationEngine : generates events
+    
+    TrendProcessor --> Trend : creates/modifies
+    PersonInfluence --> Person : influences
+    
+    DatabaseRepository --> Person : persists
+    DatabaseRepository --> Trend : persists
+    DatabaseRepository --> BaseEvent : persists 

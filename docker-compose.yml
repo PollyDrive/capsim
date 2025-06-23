@@ -1,16 +1,78 @@
-version: '3.8'
 services:
-  postgres:
-    image: postgres:15-alpine
-    restart: always
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
-      - "${POSTGRES_PORT}:5432"
+      - "8000:8000"
+      - "9090:9090"  # Metrics port
+    environment:
+      - DATABASE_URL=postgresql://capsim_rw:${CAPSIM_RW_PASSWORD:-capsim_password}@postgres:5432/${POSTGRES_DB:-capsim}
+      - DATABASE_URL_RO=postgresql://capsim_ro:${CAPSIM_RO_PASSWORD:-capsim_password}@postgres:5432/${POSTGRES_DB:-capsim}
+      - POSTGRES_DB=${POSTGRES_DB:-capsim}
+      - CAPSIM_RW_PASSWORD=${CAPSIM_RW_PASSWORD:-capsim_password}
+      - CAPSIM_RO_PASSWORD=${CAPSIM_RO_PASSWORD:-capsim_password}
+      - DOCKER_ENV=true
+      - DECIDE_SCORE_THRESHOLD=${DECIDE_SCORE_THRESHOLD:-0.25}
+      - TREND_ARCHIVE_THRESHOLD_DAYS=${TREND_ARCHIVE_THRESHOLD_DAYS:-3}
+      - BASE_RATE=${BASE_RATE:-43.2}
+      - BATCH_SIZE=${BATCH_SIZE:-100}
+      - ENABLE_METRICS=${ENABLE_METRICS:-true}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+      - ./config:/app/config
+
+  postgres:
+    image: postgres:15
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-capsim}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres_password}
+      - CAPSIM_RW_PASSWORD=${CAPSIM_RW_PASSWORD:-capsim_password}
+      - CAPSIM_RO_PASSWORD=${CAPSIM_RO_PASSWORD:-capsim_password}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  prometheus:
+    image: prom/prometheus:v2.40.0
+    ports:
+      - "9091:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml
+      - prometheus_data:/prometheus
+
+  grafana:
+    image: grafana/grafana:9.2.0
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml
+    depends_on:
+      - prometheus
 
 volumes:
   postgres_data:
+  prometheus_data:
+  grafana_data:
