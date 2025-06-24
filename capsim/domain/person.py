@@ -35,7 +35,7 @@ class Person:
     energy_level: float = 5.0
     
     # Time and interaction tracking
-    time_budget: int = 0  # 0-5 actions per day
+    time_budget: float = 2.5  # 0.0-5.0 float scale
     exposure_history: Dict[str, datetime] = field(default_factory=dict)
     interests: Dict[str, float] = field(default_factory=dict)
     

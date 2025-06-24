@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
-Bootstrap script for CAPSIM database initialization.
-Senior Database Developer role implementation.
+Senior Database Developer Bootstrap Script для CAPSIM.
 
-Выполняет:
-1. Создание схемы capsim
-2. Применение alembic миграций
+Выполняет полную инициализацию БД:
+1. Создание схемы capsim с правами доступа
+2. Создание всех таблиц
 3. Загрузка seed данных из trend_affinity.json
 4. Генерация 1000 агентов с русскими именами
-5. Инициализация базовых трендов
+5. Валидация данных
 """
 
 import os
@@ -25,19 +24,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import psycopg2
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 from faker import Faker
-from sqlalchemy import create_engine, text, MetaData, Table
-from sqlalchemy.orm import sessionmaker
-from alembic import command
-from alembic.config import Config
-
-from capsim.db.models import (
-    SimulationRun, Person, Trend, Event, PersonAttributeHistory,
-    AgentInterests, AffinityMap, DailyTrendSummary, Base
-)
-from capsim.db.repositories import DatabaseRepository
+from sqlalchemy import create_engine, text
 
 
-class CapsimBootstrap:
+class CapsimSeniorBootstrap:
     """Senior Database Developer bootstrap implementation."""
     
     PROFESSIONS = [
@@ -68,7 +58,7 @@ class CapsimBootstrap:
         # Faker for Russian names
         self.fake = Faker('ru_RU')
         
-        print(f"🚀 CAPSIM Bootstrap: Инициализация БД...")
+        print(f"🚀 CAPSIM Senior Bootstrap: Инициализация БД...")
         print(f"   Database: {self.postgres_db}")
         print(f"   Schema: capsim")
         print(f"   Target: 1000 русских агентов")
@@ -103,38 +93,14 @@ class CapsimBootstrap:
         
         conn.close()
     
-    def run_alembic_migration(self) -> None:
-        """Применение alembic миграций."""
-        print("🔄 Применение Alembic миграций...")
-        
-        # Set environment for alembic
-        os.environ["DATABASE_URL"] = self.app_url
-        
-        try:
-            # Create alembic config
-            alembic_cfg = Config("alembic.ini")
-            alembic_cfg.set_main_option("sqlalchemy.url", self.app_url)
-            
-            # Run migration
-            command.upgrade(alembic_cfg, "head")
-            print("✅ Миграции применены успешно")
-            
-        except Exception as e:
-            print(f"❌ Ошибка миграции: {e}")
-            # Fallback - create tables manually
-            self.create_tables_manually()
-    
-    def create_tables_manually(self) -> None:
-        """Создание таблиц вручную если alembic не сработал."""
-        print("🔧 Создание таблиц вручную...")
+    def create_tables(self) -> None:
+        """Создание всех таблиц в правильном порядке."""
+        print("🔧 Создание таблиц capsim...")
         
         engine = create_engine(self.admin_url)
         
         # Define tables in correct order (respecting foreign keys)
         ddl_commands = [
-            # Schema creation
-            "CREATE SCHEMA IF NOT EXISTS capsim",
-            
             # simulation_runs table
             """
             CREATE TABLE IF NOT EXISTS capsim.simulation_runs (
@@ -254,8 +220,10 @@ class CapsimBootstrap:
                 UNIQUE(simulation_id, simulation_day, topic)
             )
             """,
-            
-            # Create indexes
+        ]
+        
+        # Create indexes
+        index_commands = [
             "CREATE INDEX IF NOT EXISTS idx_persons_simulation_id ON capsim.persons(simulation_id)",
             "CREATE INDEX IF NOT EXISTS idx_trends_simulation_id ON capsim.trends(simulation_id)",
             "CREATE INDEX IF NOT EXISTS idx_trends_topic ON capsim.trends(topic)",
@@ -265,15 +233,28 @@ class CapsimBootstrap:
         ]
         
         with engine.connect() as conn:
+            tables_created = 0
             for ddl in ddl_commands:
                 try:
                     conn.execute(text(ddl))
                     conn.commit()
+                    tables_created += 1
                 except Exception as e:
-                    print(f"⚠️  Warning executing DDL: {e}")
+                    print(f"⚠️  Warning creating table: {e}")
+                    continue
+            
+            # Create indexes
+            indexes_created = 0
+            for idx in index_commands:
+                try:
+                    conn.execute(text(idx))
+                    conn.commit()
+                    indexes_created += 1
+                except Exception as e:
+                    print(f"⚠️  Warning creating index: {e}")
                     continue
         
-        print("✅ Таблицы созданы вручную")
+        print(f"✅ Создано {tables_created} таблиц и {indexes_created} индексов")
     
     def seed_affinity_data(self) -> None:
         """Загрузка данных аффинити из JSON."""
@@ -356,7 +337,7 @@ class CapsimBootstrap:
         
         print(f"✅ Создано {insert_count} записей agent_interests")
     
-    def generate_russian_agents(self, count: int = 1000) -> None:
+    def generate_russian_agents(self, count: int = 1000) -> str:
         """Генерация агентов с русскими именами и правильным соответствием пола."""
         print(f"👥 Генерация {count} агентов с русскими именами...")
         
@@ -515,16 +496,16 @@ class CapsimBootstrap:
         
         print("✅ Проверка завершена")
     
-    async def run_bootstrap(self) -> None:
+    def run_bootstrap(self) -> None:
         """Основной метод bootstrap."""
-        print("🚀 Запуск CAPSIM Bootstrap...")
+        print("🚀 Запуск CAPSIM Senior Bootstrap...")
         
         try:
             # Step 1: Setup schema and permissions
             self.setup_schema_and_permissions()
             
-            # Step 2: Run migrations
-            self.run_alembic_migration()
+            # Step 2: Create tables
+            self.create_tables()
             
             # Step 3: Seed affinity data
             self.seed_affinity_data()
@@ -538,7 +519,7 @@ class CapsimBootstrap:
             # Step 6: Verify everything
             self.verify_data()
             
-            print(f"🎉 CAPSIM Bootstrap завершен успешно!")
+            print(f"🎉 CAPSIM Senior Bootstrap завершен успешно!")
             print(f"   💾 БД готова для запуска симуляций")
             print(f"   🆔 Test Simulation ID: {simulation_id}")
             
@@ -549,10 +530,8 @@ class CapsimBootstrap:
 
 def main():
     """Entry point."""
-    bootstrap = CapsimBootstrap()
-    
-    # Run async bootstrap
-    asyncio.run(bootstrap.run_bootstrap())
+    bootstrap = CapsimSeniorBootstrap()
+    bootstrap.run_bootstrap()
 
 
 if __name__ == "__main__":

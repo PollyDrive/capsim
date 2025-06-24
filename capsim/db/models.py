@@ -2,7 +2,7 @@
 Database models for CAPSIM 2.0 using SQLAlchemy 2.0.
 """
 
-from sqlalchemy import Column, Integer, String, Float, DateTime, Text, ForeignKey, BOOLEAN, JSON
+from sqlalchemy import Column, Integer, String, Float, DateTime, Date, Text, ForeignKey, BOOLEAN, JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
@@ -38,6 +38,12 @@ class Person(Base):
     simulation_id = Column(UUID(as_uuid=True), ForeignKey("simulation_runs.run_id"), nullable=False)
     profession = Column(String(50), nullable=False)
     
+    # Personal information (REQUIRED FIELDS)
+    first_name = Column(String(100), nullable=False)  # Russian first name
+    last_name = Column(String(100), nullable=False)   # Russian last name with proper gender suffix
+    gender = Column(String(10), nullable=False)       # 'male' or 'female'
+    date_of_birth = Column(Date, nullable=False)   # For age calculation (18-65 years)
+    
     # Dynamic attributes (0.0-5.0 scale)
     financial_capability = Column(Float, default=0.0)
     trend_receptivity = Column(Float, default=0.0)
@@ -45,7 +51,7 @@ class Person(Base):
     energy_level = Column(Float, default=5.0)
     
     # Time and interaction tracking
-    time_budget = Column(Integer, default=0)  # 0-5 actions per day
+    time_budget = Column(Float, default=2.5)  # 0.0-5.0 float scale
     exposure_history = Column(JSON, default=dict)  # {trend_id: timestamp}
     interests = Column(JSON, default=dict)  # {interest_name: value}
     

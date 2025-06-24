@@ -4,6 +4,7 @@ Database repositories for CAPSIM 2.0 - CRUD operations and batch processing.
 
 import json
 import logging
+from datetime import datetime
 from typing import List, Dict, Optional, Any
 from uuid import UUID
 
@@ -102,6 +103,80 @@ class DatabaseRepository:
             await session.execute(stmt)
             await session.commit()
             
+    async def get_active_simulations(self) -> List[SimulationRun]:
+        """Get all active (running) simulations."""
+        async with self.ReadOnlySession() as session:
+            result = await session.execute(
+                select(SimulationRun).where(
+                    SimulationRun.status.in_(["RUNNING", "ACTIVE", "STOPPING"])
+                ).order_by(SimulationRun.created_at.desc())
+            )
+            return result.scalars().all()
+            
+    async def clear_future_events(self, simulation_id: UUID, 
+                                current_time: Optional[float] = None, 
+                                force: bool = False) -> int:
+        """
+        Clear future events from queue for graceful shutdown.
+        
+        Args:
+            simulation_id: Target simulation ID
+            current_time: Current simulation time (events after this will be cleared)
+            force: Force clear all events regardless of timestamp
+            
+        Returns:
+            Number of events cleared
+        """
+        async with self.SessionLocal() as session:
+            if force or current_time is None:
+                # Force mode: clear all events for simulation
+                stmt = delete(Event).where(Event.simulation_id == simulation_id)
+            else:
+                # Graceful mode: clear only future events
+                stmt = delete(Event).where(
+                    Event.simulation_id == simulation_id,
+                    Event.timestamp > current_time
+                )
+                
+            result = await session.execute(stmt)
+            cleared_count = result.rowcount
+            await session.commit()
+            
+            logger.info(json.dumps({
+                "event": "future_events_cleared",
+                "simulation_id": str(simulation_id),
+                "cleared_count": cleared_count,
+                "method": "force" if force else "graceful",
+                "current_time": current_time
+            }))
+            
+            return cleared_count
+            
+    async def force_complete_simulation(self, simulation_id: UUID) -> None:
+        """
+        Force complete all pending operations for simulation.
+        Used in emergency shutdown scenarios.
+        """
+        async with self.SessionLocal() as session:
+            # Update simulation end time
+            current_time = datetime.utcnow().isoformat()
+            
+            stmt = update(SimulationRun).where(
+                SimulationRun.run_id == simulation_id
+            ).values(
+                status="FORCE_STOPPED",
+                end_time=current_time
+            )
+            
+            await session.execute(stmt)
+            await session.commit()
+            
+            logger.info(json.dumps({
+                "event": "simulation_force_completed",
+                "simulation_id": str(simulation_id),
+                "end_time": current_time
+            }))
+            
     # Person operations  
     async def create_person(self, person: Person) -> None:
         """Create new person/agent."""
@@ -110,16 +185,54 @@ class DatabaseRepository:
             await session.commit()
             
     async def bulk_create_persons(self, persons: List[Person]) -> None:
-        """Bulk create persons for better performance."""
+        """Bulk create persons - appends new persons without overwriting existing ones."""
+        if not persons:
+            return
+            
         async with self.SessionLocal() as session:
             session.add_all(persons)
             await session.commit()
             
             logger.info(json.dumps({
-                "event": "bulk_persons_created",
+                "event": "bulk_persons_created", 
                 "count": len(persons),
                 "simulation_id": str(persons[0].simulation_id) if persons else None
             }))
+            
+    async def get_persons_count(self, simulation_id: UUID = None) -> int:
+        """Get total count of persons, optionally filtered by simulation."""
+        async with self.ReadOnlySession() as session:
+            query = select(Person.id)
+            if simulation_id:
+                query = query.where(Person.simulation_id == simulation_id)
+            result = await session.execute(query)
+            return len(result.scalars().all())
+            
+    async def get_persons_for_simulation(self, simulation_id: UUID, num_agents: int) -> List[Person]:
+        """
+        Get persons for simulation with smart agent allocation logic:
+        - If fewer agents in DB than requested: return existing + create missing
+        - If more agents in DB than requested: return first N agents by creation order
+        """
+        async with self.ReadOnlySession() as session:
+            # Get existing persons for this simulation  
+            result = await session.execute(
+                select(Person)
+                .where(Person.simulation_id == simulation_id)
+                .order_by(Person.created_at)
+                .limit(num_agents)
+            )
+            existing_persons = result.scalars().all()
+            
+            logger.info(json.dumps({
+                "event": "persons_allocation",
+                "simulation_id": str(simulation_id),
+                "existing_count": len(existing_persons),
+                "requested_count": num_agents,
+                "allocation_strategy": "reuse_existing" if len(existing_persons) >= num_agents else "supplement_missing"
+            }))
+            
+            return existing_persons
             
     async def get_persons_by_simulation(self, simulation_id: UUID) -> List[Person]:
         """Get all persons for a simulation."""
@@ -163,12 +276,27 @@ class DatabaseRepository:
             await session.execute(stmt)
             await session.commit()
             
-    # Event operations
+    # Event operations - events are always appended, never overwritten
     async def create_event(self, event: Event) -> None:
-        """Create new event."""
+        """Create new event - always appends to event log."""
         async with self.SessionLocal() as session:
             session.add(event)
             await session.commit()
+            
+    async def bulk_create_events(self, events: List[Event]) -> None:
+        """Bulk create events for better performance."""
+        if not events:
+            return
+            
+        async with self.SessionLocal() as session:
+            session.add_all(events)
+            await session.commit()
+            
+            logger.info(json.dumps({
+                "event": "bulk_events_created",
+                "count": len(events),
+                "simulation_id": str(events[0].simulation_id) if events else None
+            }))
             
     # Affinity Map operations  
     async def load_affinity_map(self) -> Dict[str, Dict[str, float]]:

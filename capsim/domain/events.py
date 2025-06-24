@@ -32,11 +32,13 @@ class BaseEvent(ABC):
     event_id: UUID
     priority: int
     timestamp: float  # simulation time in minutes
+    timestamp_real: Optional[float] = None  # real wall-clock timestamp for realtime mode
     
-    def __init__(self, priority: int, timestamp: float):
+    def __init__(self, priority: int, timestamp: float, timestamp_real: Optional[float] = None):
         self.event_id = uuid4()
         self.priority = priority
         self.timestamp = timestamp
+        self.timestamp_real = timestamp_real
     
     @abstractmethod
     def process(self, engine: "SimulationEngine") -> None:
@@ -97,6 +99,18 @@ class PublishPostAction(BaseEvent):
         
         # Базовая виральность зависит от социального статуса агента
         base_virality = min(5.0, agent.social_status + (agent.trend_receptivity * 0.2))
+        
+        # ИСПРАВЛЕНИЕ: Увеличиваем базовую виральность для более высоких значений
+        # Добавляем бонус за профессиональную экспертизу
+        topic_affinity = agent.get_affinity_for_topic(self.topic)
+        expertise_bonus = (topic_affinity / 5.0) * 1.5  # Бонус до 1.5
+        
+        base_virality = min(5.0, 
+            agent.social_status * 1.2 +  # Увеличенный вес соц. статуса
+            (agent.trend_receptivity * 0.5) +  # Увеличенный вес восприимчивости
+            expertise_bonus +  # Бонус за экспертизу
+            1.0  # Базовый минимум
+        )
         
         # Уровень охвата зависит от финансовых возможностей
         if agent.financial_capability >= 4.0:
@@ -426,8 +440,46 @@ class TrendInfluenceEvent(BaseEvent):
                 trend.add_interaction()
                 influenced_agents += 1
                 
+                # ИСПРАВЛЕНИЕ: Сохранить взаимодействие в БД
+                engine.add_to_batch_update({
+                    "type": "trend_interaction",
+                    "trend_id": trend.trend_id,
+                    "agent_id": agent.id,
+                    "interaction_type": "influence",
+                    "timestamp": self.timestamp
+                })
+                
                 # Записать в историю воздействий
                 agent.exposure_history[str(trend.trend_id)] = engine.current_time
+                
+                # ИСПРАВЛЕНИЕ: Агент может создать новый тренд в ответ на влияние
+                # Вероятность зависит от силы влияния и социального статуса
+                response_probability = (
+                    influence_strength * 
+                    agent.social_status / 5.0 * 
+                    0.3  # Базовая вероятность ответа
+                )
+                
+                if random.random() < response_probability and agent.energy_level >= 1.0:
+                    # Планируем новый пост через 10-60 минут
+                    response_delay = random.uniform(10.0, 60.0)
+                    response_topic = agent._select_best_topic()
+                    
+                    if response_topic:
+                        response_event = PublishPostAction(
+                            agent_id=agent.id,
+                            topic=response_topic,
+                            timestamp=self.timestamp + response_delay
+                        )
+                        engine.add_event(response_event, EventPriority.AGENT_ACTION, response_event.timestamp)
+                        
+                        logger.info(json.dumps({
+                            "event": "response_post_scheduled",
+                            "responding_agent": str(agent.id),
+                            "original_trend": str(trend.trend_id),
+                            "response_topic": response_topic,
+                            "delay_minutes": response_delay
+                        }))
         
         logger.info(json.dumps({
             "event": "trend_influence_processed",

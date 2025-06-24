@@ -1,0 +1,44 @@
+sequenceDiagram
+    participant API as "REST API"
+    participant Engine as "SimulationEngine"
+    participant Clock as "RealTimeClock"
+    participant Queue as "Event Queue"
+    participant DB as "PostgreSQL"
+    participant Metrics as "Prometheus"
+
+    API->>Engine: POST /simulation/start (realtime=true)
+    Engine->>Engine: Initialize agents & trends
+    Engine->>Clock: Set SIM_SPEED_FACTOR from ENV
+    
+    loop Event Processing Loop
+        Engine->>Queue: Pop next event
+        Queue->>Engine: Event(sim_ts=120.5)
+        
+        Engine->>Engine: Convert to real_ts = start_real + 120.5*60/speed_factor
+        Engine->>Clock: await sleep_until(real_ts)
+        Clock->>Clock: Calculate delay = real_ts - time.now()
+        
+        alt Delay > 0
+            Clock->>Clock: await asyncio.sleep(delay)
+        end
+        
+        Engine->>Engine: Process event (PublishPostAction)
+        Engine->>Engine: Update agent state
+        Engine->>Engine: Add to batch_updates[]
+        
+        alt Batch commit condition
+            note right of Engine: len(batch) >= 100 OR<br/>time_since_last >= 60/speed_factor
+            Engine->>DB: Batch commit states
+            DB->>Engine: Commit success
+            Engine->>Metrics: Update latency histogram
+        end
+        
+        Engine->>Queue: Schedule next agent action
+        
+        alt Event queue empty
+            Engine->>Engine: Schedule next agent actions
+        end
+    end
+    
+    Engine->>DB: Final batch commit
+    Engine->>API: Simulation completed 

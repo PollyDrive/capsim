@@ -26,7 +26,7 @@ from unittest.mock import MagicMock, AsyncMock
 
 import sys
 sys.path.append('.')
-from demo_simulation import DemoSimulationEngine, Person, Trend, PublishPostAction
+from reports.demo_simulation import DemoSimulationEngine, Person, Trend, PublishPostAction
 
 
 class PerformanceTestRepository:

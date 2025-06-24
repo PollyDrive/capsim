@@ -13,19 +13,30 @@ services:
       - CAPSIM_RW_PASSWORD=${CAPSIM_RW_PASSWORD:-capsim_password}
       - CAPSIM_RO_PASSWORD=${CAPSIM_RO_PASSWORD:-capsim_password}
       - DOCKER_ENV=true
-      - DECIDE_SCORE_THRESHOLD=${DECIDE_SCORE_THRESHOLD:-0.25}
+      - DECIDE_SCORE_THRESHOLD=${DECIDE_SCORE_THRESHOLD:-0.15}
       - TREND_ARCHIVE_THRESHOLD_DAYS=${TREND_ARCHIVE_THRESHOLD_DAYS:-3}
-      - BASE_RATE=${BASE_RATE:-43.2}
-      - BATCH_SIZE=${BATCH_SIZE:-100}
+      - BASE_RATE=${BASE_RATE:-86.4}
+      - BATCH_SIZE=${BATCH_SIZE:-20}
       - ENABLE_METRICS=${ENABLE_METRICS:-true}
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_LEVEL=${LOG_LEVEL:-WARNING}
       - ENABLE_JSON_LOGS=${ENABLE_JSON_LOGS:-true}
     labels:
       logging: "promtail"
       service.name: "capsim-app"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     volumes:
       - ./logs:/app/logs
       - ./config:/app/config

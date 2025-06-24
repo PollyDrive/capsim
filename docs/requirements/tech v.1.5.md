@@ -148,7 +148,7 @@
 - **`trend_receptivity: float (0.0-5.0)`**,
 - **`social_status: float (0.0-5.0)`**
 - **`energy_level: float (0.0-5.0)`**,
-- **`time_budget: int (0-5)`**
+- **`time_budget: float (0.0-5.0)`**
 - **`exposure_history: Dict[str, datetime]`**,
 - **`interests: Dict[str, float]`**
 
@@ -195,8 +195,9 @@ ShopClerk, Worker, Developer, Politician, Blogger, Businessman, Doctor, Teacher,
 | Teacher | 1–3 | 1–3 | 2–4 | 1–3 | 2–4 |
 | Artist | 1–3 | 2–4 | 2–4 | 4–5 | 3–5 |
 | Doctor | 2–4 | 1–3 | 3–5 | 2–4 | 1–2 |
-### Trend
 
+
+### Trend
 Содержит информацию об отдельных информационных волнах (Trend):
 
 | Поле | Тип | Описание |

@@ -73,7 +73,7 @@
 
 ## Event Rate Limiting
 
-- **Max queue size**: 5000 событий
+- **Max queue size**: 1000 событий
 - **Agent event rate**: до 43 событий на агента в день  
 - **Base frequency**: экспоненциальное распределение с λ = 43*1000/24/60/60 ≈ 0.49 events/sec/agent
 - **Modifiers**: energy_level и time_budget влияют на частоту генерации

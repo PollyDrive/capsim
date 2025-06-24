@@ -1,223 +1,504 @@
-# CAPSIM 2.0 - Agent-based Discrete Event Simulation
+# CAPSIM 2.0 - Agent-Based Social Simulation Platform
 
-⚡ **Платформа для моделирования социальных взаимодействий между агентами различных профессий под воздействием трендов, законодательных изменений и динамических факторов.**
+[![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
+[![PostgreSQL 15](https://img.shields.io/badge/postgresql-15-blue.svg)](https://www.postgresql.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.100.0-green.svg)](https://fastapi.tiangolo.com/)
+[![Docker](https://img.shields.io/badge/docker-compose-blue.svg)](https://docs.docker.com/compose/)
 
-## ⚡ Быстрый старт
+Система дискретно-событийного моделирования социальных взаимодействий между агентами различных профессий с поддержкой трендов, внешних факторов и realtime мониторинга.
+
+## ⚡ Quick Start
 
 ```bash
-# 1. Клонируйте репозиторий
+# Clone repository
 git clone <repository-url>
 cd capsim
 
-# 2. Настройте окружение
-cp .env_example .env
-# Отредактируйте .env при необходимости
+# Setup environment
+cp .env.example .env
 
-# 3. Запустите систему
+# Start infrastructure
 docker-compose up -d
 
-# 4. Проверьте работу
-curl http://localhost:8000/healthz
+# Apply database migrations
+make migrate
+
+# Verify system health
+make check-health
+
+# Access services
+# API: http://localhost:8000
+# Grafana: http://localhost:3000 (admin:admin)
+# Prometheus: http://localhost:9091
 ```
 
-## 🏗️ Архитектура
+## 🏗 Architecture Overview
 
-CAPSIM 2.0 построен на модульной 4-слойной архитектуре:
+CAPSIM 2.0 построена на модульной архитектуре с центральным компонентом `SimulationEngine` и восемью взаимодействующими подсистемами:
 
-- **API Layer** (FastAPI) - REST endpoints и валидация
-- **Engine Layer** - SimulationEngine и очередь событий  
-- **Domain Layer** - бизнес-логика агентов и трендов
-- **DB Layer** - доступ к данным и persistence
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   FastAPI       │    │ SimulationEngine│    │   PostgreSQL    │
+│   REST API      │◄──►│   Coordinator   │◄──►│   Database      │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                        │                        │
+         ▼                        ▼                        ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Prometheus    │    │   EventQueue    │    │ TrendProcessor  │
+│   Monitoring    │    │   Prioritized   │    │   Virality      │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+```
 
-### Основные компоненты
+### Ключевые компоненты:
 
-- **SimulationEngine** - центральный координатор DES
-- **Person** - агенты с 12 типами профессий
-- **TrendProcessor** - управление жизненным циклом трендов
-- **PersonInfluence** - обработка социального влияния
+- **SimulationEngine**: Центральный координатор событий и состояний
+- **Person**: Агенты с 12 типами профессий и динамическими атрибутами
+- **TrendProcessor**: Управление жизненным циклом трендов и виральности
+- **PersonInfluence**: Обработка социального влияния между агентами
+- **EventQueue**: Приоритетная очередь с 5 уровнями приоритета
+- **DatabaseRepository**: Абстракция доступа к данным с batch-commit
+- **ExternalFactor/God**: Источники внешних событий (погода, законы)
 
-## 🎯 Технологический стек
+## 🎯 Core Features
 
-- **Python 3.11** - основной язык
-- **FastAPI** - REST API framework
-- **SQLAlchemy 2.0** - ORM и работа с БД
-- **PostgreSQL 15** - основная СУБД
-- **Alembic** - миграции БД
-- **Docker** - контейнеризация
-- **Prometheus + Grafana** - мониторинг
+### Agent Modeling
+- **12 профессий**: Artist, Businessman, Developer, Doctor, SpiritualMentor, Teacher, ShopClerk, Worker, Politician, Blogger, Unemployed, Philosopher
+- **Демографические данные**: Русские имена, пол, возраст (18-65 лет)
+- **Динамические атрибуты**: financial_capability, trend_receptivity, social_status, energy_level, time_budget
+- **Интересы**: 6 категорий (Economics, Wellbeing, Spirituality, Knowledge, Creativity, Society)
 
-## 📊 Характеристики производительности
+### Trend System
+- **7 топиков трендов**: Economic, Health, Spiritual, Conspiracy, Science, Culture, Sport
+- **Уровни охвата**: Low/Middle/High на основе социального статуса
+- **Виральность**: Динамический расчет с учетом социального влияния
+- **Архивирование**: Автоматическое удаление неактивных трендов (3+ дня)
 
-- **Throughput**: до 43 событий на агента в день
-- **Latency**: P95 < 10ms для обработки событий
-- **Scalability**: поддержка до 5000 агентов
-- **Queue Size**: максимум 5000 событий в очереди
-- **Batch Commit**: каждые 100 операций или 1 минуту
+### Event Processing
+- **5 приоритетов**: LAW=1, WEATHER=2, TREND=3, AGENT_ACTION=4, SYSTEM=5
+- **До 43 событий** на агента в день
+- **Batch-commit**: 100 операций или 1 минута симулированного времени
+- **Graceful degradation** при сбоях компонентов
 
-## 🚀 Основные endpoints
+### Monitoring & Observability
+- **Prometheus метрики**: HTTP requests, queue length, event latency, batch errors
+- **Grafana дашборды**: Overview, Real-time logs, Database monitoring
+- **Healthchecks**: Автоматические проверки всех сервисов
+- **Structured logging**: JSON-формат с trace ID
 
-- **POST /api/v1/simulations** - создание симуляции
-- **GET /api/v1/simulations/{id}** - статус симуляции
-- **GET /api/v1/simulations/{id}/agents** - список агентов
-- **GET /api/v1/simulations/{id}/trends** - активные тренды
-- **GET /healthz** - health check
-- **GET /metrics** - Prometheus метрики
+## 📊 System Capabilities
 
-## 🔧 Разработка
+| Параметр | Значение | Описание |
+|----------|----------|----------|
+| **Макс. агентов** | 1,000 | На одну симуляцию |
+| **Событий/день** | 43 на агента | Настраиваемая частота |
+| **Event latency** | P95 < 10ms | Fast mode |
+| **Realtime mode** | P95 < 100ms | С синхронизацией времени |
+| **Очередь событий** | < 5,000 | Порог переполнения |
+| **Batch size** | 100 операций | Или 1 мин. сим-времени |
 
-### Установка зависимостей
+## 🚀 Getting Started
+
+### Prerequisites
+
+- Docker & Docker Compose
+- Python 3.11+ (для разработки)
+- PostgreSQL 15+ (в контейнере)
+- 4GB RAM (рекомендуется 8GB)
+
+### Installation
+
+1. **Настройка окружения**:
+```bash
+# Создание .env файла
+cp .env.example .env
+
+# Настройка паролей (опционально)
+nano .env
+```
+
+2. **Запуск инфраструктуры**:
+```bash
+# Полный стек с мониторингом
+docker-compose up -d
+
+# Только приложение и БД
+docker-compose up -d app postgres
+```
+
+3. **Инициализация базы данных**:
+```bash
+# Применение миграций
+make migrate
+
+# Создание тестовых агентов
+python scripts/recreate_100_agents_proper.py
+```
+
+4. **Проверка системы**:
+```bash
+# Проверка health endpoints
+make check-health
+
+# Просмотр метрик
+make metrics
+
+# Мониторинг БД
+make monitor-db
+```
+
+### First Simulation
 
 ```bash
-# Poetry (рекомендуется)
-poetry install
+# Создание симуляции через API
+curl -X POST "http://localhost:8000/api/v1/simulations" \
+  -H "Content-Type: application/json" \
+  -d '{"num_agents": 100, "duration_days": 1}'
 
-# Или pip
+# Получение статуса
+curl "http://localhost:8000/api/v1/simulations/{simulation_id}"
+
+# Просмотр агентов
+curl "http://localhost:8000/api/v1/simulations/{simulation_id}/agents"
+```
+
+## 🛠 Development
+
+### Local Development
+
+```bash
+# Установка зависимостей
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
 pip install -r requirements.txt
-```
 
-### Локальная разработка
-
-```bash
 # Запуск только БД
-docker-compose up postgres -d
+docker-compose up -d postgres
 
-# Установка переменных окружения
-export DATABASE_URL="postgresql://postgres:postgres_password@localhost:5432/capsim"
-
-# Запуск приложения
+# Локальный запуск приложения
+export DATABASE_URL="postgresql://capsim_rw:password@localhost:5432/capsim_db"
 python -m capsim.api.main
 
-# Или через uvicorn
-uvicorn capsim.api.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-### Тестирование
-
-```bash
-# Запуск тестов
-make test
-
-# Или pytest напрямую
-pytest tests/ -v
-
-# Линтинг и типизация
+# Тестирование
+pytest
 make lint
+make type-check
 ```
 
-### Makefile команды
+### Database Operations
 
 ```bash
-make dev-up      # Запуск в dev режиме
-make dev-down    # Остановка dev контейнеров
-make test        # Запуск тестов
-make lint        # Проверка кода (ruff + mypy)
-make bootstrap   # Инициализация системы
+# Создание новой миграции
+alembic revision --autogenerate -m "description"
+
+# Откат на предыдущую версию
+alembic downgrade -1
+
+# Прямое подключение к БД
+docker exec -it capsim-postgres-1 psql -U postgres -d capsim_db
+
+# Backup/Restore
+make backup-db
+make restore-db BACKUP_FILE=backup_20250624.sql
 ```
 
-## 🎮 Использование
-
-### Создание симуляции
+### Code Quality
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/simulations \
-  -H "Content-Type: application/json" \
-  -d '{
-    "num_agents": 1000,
-    "duration_days": 7,
-    "seed": 42
-  }'
+# Линтинг и форматирование
+ruff check .
+ruff format .
+
+# Типизация
+mypy --strict capsim
+
+# Тестирование
+pytest --cov=capsim tests/
 ```
 
-### Получение статуса
+## 📈 Monitoring & Operations
+
+### Service Health
 
 ```bash
-curl http://localhost:8000/api/v1/simulations/{simulation_id}
+# Общий статус системы
+make check-health
+
+# Логи в реальном времени
+make compose-logs
+
+# Метрики Prometheus
+curl http://localhost:9091/api/v1/query?query=capsim_simulations_active
 ```
 
-### Мониторинг
-
-- **Grafana**: http://localhost:3000 (admin/admin)
-- **Prometheus**: http://localhost:9091
-- **API Docs**: http://localhost:8000/docs
-
-## 📈 Мониторинг и метрики
-
-### Prometheus метрики
-
-- `capsim_queue_length` - размер очереди событий
-- `capsim_event_latency_ms` - латентность обработки событий
-- `capsim_batch_commit_errors_total` - ошибки batch commit
-- `capsim_active_agents` - количество активных агентов
-- `capsim_active_trends` - количество активных трендов
-
-### Алерты
-
-- **WARNING**: P95 latency > 10ms в течение 3 минут
-- **CRITICAL**: Queue size > 5000 событий
-
-## 🗃️ Структура проекта
-
-```
-capsim/
-├── api/            # FastAPI routers и endpoints
-├── engine/         # SimulationEngine и DES core
-├── db/             # SQLAlchemy models и repositories
-├── domain/         # Domain objects (Person, Trend, Events)
-├── common/         # Утилиты, логирование, конфигурация
-└── cli/            # Command line interfaces
-
-docs/
-├── adr/            # Architecture Decision Records
-├── diagrams/       # Mermaid диаграммы
-├── architecture_overview.md
-└── events.md       # Каталог событий
-
-config/             # YAML конфигурация
-scripts/            # Bootstrap и утилиты
-monitoring/         # Prometheus и Grafana конфиги
-tests/              # Тесты
-```
-
-## 🔒 Безопасность
-
-⚠️ **ВАЖНО**: API не защищено авторизацией. Сервис должен работать в изолированной сети или VPN.
-
-## 📝 Конфигурация
-
-Основные параметры в `.env`:
+### Database Monitoring
 
 ```bash
-# Симуляция
+# Текущий статус агентов
+make monitor-db
+
+# Проверка симуляций
+SELECT run_id, status, num_agents, start_time 
+FROM capsim.simulation_runs 
+ORDER BY start_time DESC;
+
+# Статистика событий
+SELECT COUNT(*) as events_last_hour
+FROM capsim.events 
+WHERE created_at > NOW() - INTERVAL '1 hour';
+```
+
+### Grafana Dashboards
+
+- **CAPSIM Overview**: http://localhost:3000/d/capsim-overview
+  - HTTP request metrics
+  - Active simulations
+  - Queue length monitoring
+  
+- **Real-time Logs**: http://localhost:3000/d/capsim-logs
+  - Agent activity streams
+  - Database operations
+  - Error tracking
+
+### Performance Tuning
+
+```env
+# .env конфигурация для производительности
+BATCH_SIZE=100                    # Размер batch-commit
+SIM_SPEED_FACTOR=60              # Ускорение симуляции
 DECIDE_SCORE_THRESHOLD=0.25      # Порог принятия решений
 TREND_ARCHIVE_THRESHOLD_DAYS=3   # Архивирование трендов
-BASE_RATE=43.2                   # События в день на агента
-BATCH_SIZE=100                   # Размер batch commit
-
-# Производительность  
-SHUTDOWN_TIMEOUT_SEC=30          # Таймаут graceful shutdown
-MAX_QUEUE_SIZE=5000              # Максимальный размер очереди
 ```
 
-## 🤝 Участие в разработке
+## 🔧 Configuration
 
-1. Форкните репозиторий
-2. Создайте feature branch
-3. Соблюдайте архитектурные границы между слоями  
-4. Добавьте тесты для нового функционала
-5. Убедитесь что CI проходит (ruff + mypy + pytest)
-6. Создайте Pull Request
+### Environment Variables
 
-## 📜 Лицензия
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DATABASE_URL` | - | PostgreSQL connection string |
+| `LOG_LEVEL` | INFO | Logging level (DEBUG/INFO/WARN/ERROR) |
+| `BATCH_SIZE` | 100 | Batch commit size |
+| `SIM_SPEED_FACTOR` | 60 | Simulation speed multiplier |
+| `ENABLE_METRICS` | true | Prometheus metrics export |
+| `REALTIME_MODE` | false | Real-time simulation mode |
 
-Copyright (c) 2024 CAPSIM Team. All rights reserved.
+### Scaling Configuration
+
+```yaml
+# Horizontal scaling (будущая версия)
+services:
+  app:
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+```
+
+## 📚 API Documentation
+
+### Core Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/simulations` | Создать симуляцию |
+| `GET` | `/api/v1/simulations/{id}` | Получить статус |
+| `POST` | `/api/v1/simulations/{id}/start` | Запустить симуляцию |
+| `POST` | `/api/v1/simulations/{id}/stop` | Остановить симуляцию |
+| `GET` | `/api/v1/simulations/{id}/agents` | Список агентов |
+| `GET` | `/api/v1/simulations/{id}/trends` | Активные тренды |
+
+### System Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/healthz` | Health check |
+| `GET` | `/metrics` | Prometheus metrics |
+| `GET` | `/api/v1/status` | System status |
+
+### Response Examples
+
+```json
+{
+  "simulation_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "RUNNING",
+  "num_agents": 100,
+  "duration_days": 1,
+  "created_at": "2025-06-24T10:00:00Z",
+  "current_time": 45.5,
+  "events_processed": 1250
+}
+```
+
+Полная документация API: http://localhost:8000/docs
+
+## 🔄 Migration & Upgrade
+
+### Database Migrations
+
+Текущие миграции:
+- **0001**: Initial schema (persons, trends, events, simulation_runs)
+- **0002**: Person demographics (first_name, last_name, gender, date_of_birth)
+- **0003**: Interests/Topics separation (agent_interests, affinity_map)
+- **0004**: Birth years fix (1960-2007) + time_budget FLOAT
+
+### System Upgrade
+
+```bash
+# Backup перед обновлением
+make backup-db
+
+# Обновление кода
+git pull origin main
+
+# Применение новых миграций
+make migrate
+
+# Перезапуск сервисов
+docker-compose down && docker-compose up -d
+
+# Проверка после обновления
+make check-health
+```
+
+## 🧪 Testing
+
+### Unit Tests
+
+```bash
+# Запуск всех тестов
+pytest
+
+# Тесты с покрытием кода
+pytest --cov=capsim --cov-report=html
+
+# Тесты определенного компонента
+pytest tests/test_simulation_engine.py
+```
+
+### Integration Tests
+
+```bash
+# Тестирование API
+pytest tests/api/
+
+# Тестирование базы данных
+pytest tests/db/
+
+# End-to-end тесты
+pytest tests/e2e/
+```
+
+### Performance Tests
+
+```bash
+# Нагрузочное тестирование
+pytest tests/performance/test_load.py
+
+# Benchmark агентов
+python scripts/benchmark_agents.py
+```
+
+## 🔧 Troubleshooting
+
+### Common Issues
+
+**База данных недоступна**:
+```bash
+# Проверка контейнера
+docker ps | grep postgres
+
+# Проверка логов
+docker logs capsim-postgres-1
+
+# Пересоздание контейнера
+docker-compose down postgres && docker-compose up -d postgres
+```
+
+**Медленная обработка событий**:
+```bash
+# Проверка размера очереди
+curl http://localhost:9091/api/v1/query?query=capsim_queue_length
+
+# Анализ метрик latency
+curl http://localhost:9091/api/v1/query?query=capsim_event_latency_ms
+```
+
+**Ошибки batch-commit**:
+```bash
+# Проверка логов приложения
+make app-logs
+
+# Мониторинг БД соединений
+make monitor-db
+```
+
+### Debug Mode
+
+```bash
+# Включение debug логов
+export LOG_LEVEL=DEBUG
+
+# Запуск с подробными логами
+docker-compose up -d && docker-compose logs -f app
+```
+
+## 📖 Documentation
+
+### Technical Documentation
+
+- **Architecture**: `docs/architecture_overview.md`
+- **Database Schema**: `docs/database-schema-requirements.md`
+- **API Specification**: `docs/api-specification.md`
+- **DevOps Guide**: `docs/devops-requirements.md`
+- **Configuration**: `docs/configuration.md`
+
+### Decision Records (ADR)
+
+- **ADR-0001**: Stack and Layering (`docs/adr/0001-stack-and-layering.md`)
+- **ADR-0002**: Realtime Clock Architecture (`docs/adr/0002-realtime-clock.md`)
+
+### Reports
+
+All implementation reports and analysis are in `docs/reports/`:
+- Sprint summaries
+- Technical analysis
+- Performance reports
+- Development decisions
+
+## 🤝 Contributing
+
+### Development Workflow
+
+1. Fork the repository
+2. Create feature branch: `git checkout -b feature/amazing-feature`
+3. Run tests: `make test`
+4. Commit changes: `git commit -m 'Add amazing feature'`
+5. Push to branch: `git push origin feature/amazing-feature`
+6. Open Pull Request
+
+### Code Standards
+
+- **Python**: PEP 8, type hints, Google docstrings
+- **SQL**: Lowercase with underscores
+- **Git**: Conventional commits
+- **Testing**: Minimum 80% coverage
+
+## 📝 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## 🔗 Links
+
+- **API Documentation**: http://localhost:8000/docs
+- **Monitoring Dashboard**: http://localhost:3000
+- **Metrics**: http://localhost:9091
+- **Technical Specification**: `docs/requirements/tech v.1.5.md`
 
 ---
 
-## 🆘 Поддержка
-
-- **Issues**: GitHub Issues для багов и feature requests
-- **Documentation**: `/docs` для архитектурной документации
-- **API Docs**: `/docs` endpoint когда приложение запущено
+**CAPSIM 2.0** - Production Ready Social Simulation Platform 🚀
 
 
 

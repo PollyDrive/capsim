@@ -18,8 +18,8 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Create schema
-    op.execute("CREATE SCHEMA IF NOT EXISTS capsim")
+    # Schema already created manually
+    # op.execute("CREATE SCHEMA IF NOT EXISTS capsim")
     
     # Create simulation_runs table
     op.create_table('simulation_runs',

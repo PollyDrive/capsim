@@ -9,6 +9,7 @@ import asyncio
 import os
 import json
 import logging
+import time
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 
@@ -18,6 +19,8 @@ from ..domain.events import (
     BaseEvent, EventPriority, PublishPostAction, EnergyRecoveryEvent, 
     DailyResetEvent, SaveDailyTrendEvent
 )
+from ..common.clock import Clock, create_clock
+from ..common.settings import settings
 
 if TYPE_CHECKING:
     from ..db.repositories import DatabaseRepository
@@ -58,7 +61,7 @@ class SimulationEngine:
     - Batch-commit операциями
     """
     
-    def __init__(self, db_repo: "DatabaseRepository"):
+    def __init__(self, db_repo: "DatabaseRepository", clock: Clock = None):
         self.agents: List[Person] = []
         self.current_time: float = 0.0  # simulation time in minutes
         self.event_queue: List[PriorityEvent] = []
@@ -69,11 +72,15 @@ class SimulationEngine:
         self._batch_updates: List[Dict] = []
         self._last_commit_time: float = 0.0
         self._last_batch_commit: float = 0.0
+        self._simulation_start_real: float = 0.0
         
-        # Configuration from ENV
-        self.batch_size = int(os.getenv("BATCH_SIZE", "100"))
+        # Configuration from settings
+        self.batch_size = settings.BATCH_SIZE
         self.batch_timeout_minutes = float(os.getenv("BATCH_TIMEOUT_MIN", "1.0"))
-        self.trend_archive_threshold_days = int(os.getenv("TREND_ARCHIVE_DAYS", "3"))
+        self.trend_archive_threshold_days = settings.TREND_ARCHIVE_THRESHOLD_DAYS
+        
+        # Clock for realtime support
+        self.clock = clock or create_clock(settings.ENABLE_REALTIME)
         
         # Dependencies
         self.db_repo = db_repo
@@ -108,38 +115,66 @@ class SimulationEngine:
         # Загрузить affinity map из БД
         self.affinity_map = await self.db_repo.load_affinity_map()
         
-        # Генерировать агентов согласно ТЗ распределению
-        profession_distribution = [
-            ("Teacher", int(num_agents * 0.20)),      # 20%
-            ("ShopClerk", int(num_agents * 0.18)),    # 18%
-            ("Developer", int(num_agents * 0.12)),    # 12%
-            ("Unemployed", int(num_agents * 0.09)),   # 9%
-            ("Businessman", int(num_agents * 0.08)),  # 8%
-            ("Artist", int(num_agents * 0.08)),       # 8%
-            ("Worker", int(num_agents * 0.07)),       # 7%
-            ("Blogger", int(num_agents * 0.05)),      # 5%
-            ("SpiritualMentor", int(num_agents * 0.03)), # 3%
-            ("Philosopher", int(num_agents * 0.02)),  # 2%
-            ("Politician", int(num_agents * 0.01)),   # 1%
-            ("Doctor", int(num_agents * 0.01)),       # 1%
-        ]
+        # НОВАЯ ЛОГИКА: проверяем существующих агентов для данной симуляции
+        existing_agents = await self.db_repo.get_persons_for_simulation(self.simulation_id, num_agents)
+        existing_count = len(existing_agents)
         
-        # Корректируем для точного количества
-        total_assigned = sum(count for _, count in profession_distribution)
-        if total_assigned < num_agents:
-            # Добавляем недостающих к наиболее популярным профессиям
-            remaining = num_agents - total_assigned
-            profession_distribution[0] = ("Teacher", profession_distribution[0][1] + remaining)
-        
-        agents_to_create = []
-        for profession, count in profession_distribution:
-            for _ in range(count):
-                agent = Person.create_random_agent(profession, self.simulation_id)
-                agents_to_create.append(agent)
+        if existing_count >= num_agents:
+            # Достаточно агентов - используем первых N по порядку создания
+            self.agents = existing_agents[:num_agents]
+            logger.info(json.dumps({
+                "event": "agents_reused",
+                "simulation_id": str(self.simulation_id),
+                "reused_count": len(self.agents),
+                "requested_count": num_agents
+            }))
+        else:
+            # Недостаточно агентов - создаем недостающих
+            agents_to_create_count = num_agents - existing_count
             
-        # Сохранить агентов в БД и добавить в движок
-        await self.db_repo.bulk_create_persons(agents_to_create)
-        self.agents = agents_to_create
+            # Генерируем недостающих агентов согласно ТЗ распределению
+            profession_distribution = [
+                ("Teacher", int(agents_to_create_count * 0.20)),      # 20%
+                ("ShopClerk", int(agents_to_create_count * 0.18)),    # 18%
+                ("Developer", int(agents_to_create_count * 0.12)),    # 12%
+                ("Unemployed", int(agents_to_create_count * 0.09)),   # 9%
+                ("Businessman", int(agents_to_create_count * 0.08)),  # 8%
+                ("Artist", int(agents_to_create_count * 0.08)),       # 8%
+                ("Worker", int(agents_to_create_count * 0.07)),       # 7%
+                ("Blogger", int(agents_to_create_count * 0.05)),      # 5%
+                ("SpiritualMentor", int(agents_to_create_count * 0.03)), # 3%
+                ("Philosopher", int(agents_to_create_count * 0.02)),  # 2%
+                ("Politician", int(agents_to_create_count * 0.01)),   # 1%
+                ("Doctor", int(agents_to_create_count * 0.01)),       # 1%
+            ]
+            
+            # Корректируем для точного количества
+            total_assigned = sum(count for _, count in profession_distribution)
+            if total_assigned < agents_to_create_count:
+                remaining = agents_to_create_count - total_assigned
+                profession_distribution[0] = ("Teacher", profession_distribution[0][1] + remaining)
+            
+            agents_to_create = []
+            for profession, count in profession_distribution:
+                for _ in range(count):
+                    agent = Person.create_random_agent(profession, self.simulation_id)
+                    agents_to_create.append(agent)
+                
+            # Создаем только недостающих агентов
+            if agents_to_create:
+                await self.db_repo.bulk_create_persons(agents_to_create)
+            
+            # Объединяем существующих и новых агентов
+            self.agents = existing_agents + agents_to_create
+            
+            logger.info(json.dumps({
+                "event": "agents_supplemented",
+                "simulation_id": str(self.simulation_id),
+                "existing_count": existing_count,
+                "created_count": len(agents_to_create),
+                "total_count": len(self.agents),
+                "requested_count": num_agents
+            }))
         
         # Загрузить начальные тренды (если есть)
         existing_trends = await self.db_repo.get_active_trends(self.simulation_id)
@@ -183,13 +218,16 @@ class SimulationEngine:
             
         self._running = True
         end_time = duration_days * 1440.0  # Конвертируем дни в минуты
+        self._simulation_start_real = time.time()
         
         logger.info(json.dumps({
             "event": "simulation_started",
             "simulation_id": str(self.simulation_id),
             "duration_days": duration_days,
             "end_time": end_time,
-            "agents_count": len(self.agents)
+            "agents_count": len(self.agents),
+            "realtime_mode": settings.ENABLE_REALTIME,
+            "speed_factor": settings.SIM_SPEED_FACTOR
         }))
         
         events_processed = 0
@@ -200,6 +238,18 @@ class SimulationEngine:
                 # Обработать следующее событие из очереди
                 if self.event_queue:
                     priority_event = heapq.heappop(self.event_queue)
+                    
+                    # Конвертировать sim_time в real_time для realtime режима
+                    if priority_event.event.timestamp_real is None:
+                        priority_event.event.timestamp_real = (
+                            self._simulation_start_real + 
+                            priority_event.timestamp * 60.0 / settings.SIM_SPEED_FACTOR
+                        )
+                    
+                    # Ожидание до времени события в realtime режиме
+                    if settings.ENABLE_REALTIME:
+                        await self.clock.sleep_until(priority_event.timestamp)
+                    
                     self.current_time = priority_event.timestamp
                     
                     # Обработать событие
@@ -210,15 +260,20 @@ class SimulationEngine:
                     if self._should_commit_batch():
                         await self._batch_commit_states()
                 
-                # Запланировать действия агентов (каждые 15 минут)
-                if int(self.current_time) % 15 == 0:
+                # Запланировать новые действия агентов после каждого события
+                # вместо батчевого планирования каждые 15 минут
+                if events_processed % 10 == 0:  # Каждые 10 событий
                     scheduled = await self._schedule_agent_actions()
                     agent_actions_scheduled += scheduled
-                
-                # Небольшая пауза для предотвращения блокировки
-                if events_processed % 100 == 0:
-                    await asyncio.sleep(0.001)
+                else:
+                    # Если очередь пуста, продвигаем время и планируем действия
+                    self.current_time += 5.0  # Продвигаем на 5 минут симуляции
+                    scheduled = await self._schedule_agent_actions()
+                    agent_actions_scheduled += scheduled
                     
+                # Небольшая пауза для cooperative multitasking
+                await asyncio.sleep(0.1 if settings.ENABLE_REALTIME else 0.001)
+                
         except Exception as e:
             logger.error(json.dumps({
                 "event": "simulation_error",
@@ -350,39 +405,86 @@ class SimulationEngine:
         if len(self._batch_updates) >= self.batch_size:
             return True
             
-        # Commit по времени (каждую минуту симуляции)
-        if self.current_time - self._last_batch_commit >= self.batch_timeout_minutes:
-            return True
+        # Commit по времени (адаптированному к realtime режиму)
+        if settings.ENABLE_REALTIME:
+            # В realtime режиме используем wall-clock время
+            time_since_last = time.time() - self._last_commit_time
+            timeout_seconds = settings.get_batch_timeout_seconds()
+            if time_since_last >= timeout_seconds:
+                return True
+        else:
+            # В fast режиме используем sim время
+            if self.current_time - self._last_batch_commit >= self.batch_timeout_minutes:
+                return True
             
         return False
         
     async def _batch_commit_states(self) -> None:
         """
-        Выполняет batch-commit изменений состояний агентов.
+        Выполняет batch commit накопленных обновлений состояния.
+        
+        Включает ретраи с экспоненциальным backoff при ошибках.
         """
         if not self._batch_updates:
             return
             
-        try:
-            await self.db_repo.batch_commit_states(self._batch_updates)
-            committed_count = len(self._batch_updates)
-            self._batch_updates.clear()
-            self._last_batch_commit = self.current_time
-            
-            logger.debug(json.dumps({
-                "event": "batch_commit_success",
-                "updates_committed": committed_count,
-                "simulation_time": self.current_time
-            }))
-            
-        except Exception as e:
-            logger.error(json.dumps({
-                "event": "batch_commit_error",
-                "updates_lost": len(self._batch_updates),
-                "error": str(e)
-            }))
-            # Очищаем batch чтобы не накапливать ошибки
-            self._batch_updates.clear()
+        updates_count = len(self._batch_updates)
+        retry_attempts = settings.BATCH_RETRY_ATTEMPTS
+        backoffs = settings.get_batch_retry_backoffs()
+        
+        for attempt in range(retry_attempts):
+            try:
+                start_time = time.time()
+                
+                # Разделить обновления по типам
+                person_updates = [u for u in self._batch_updates if u.get("type") == "person_state"]
+                trend_updates = [u for u in self._batch_updates if u.get("type") == "trend_interaction"]
+                
+                # Сохранить обновления персонажей
+                if person_updates:
+                    await self.db_repo.bulk_update_persons(person_updates)
+                
+                # ИСПРАВЛЕНИЕ: Сохранить взаимодействия с трендами
+                if trend_updates:
+                    for update in trend_updates:
+                        await self.db_repo.increment_trend_interactions(update["trend_id"])
+                
+                commit_time = (time.time() - start_time) * 1000
+                
+                # Очистить batch
+                self._batch_updates.clear()
+                self._last_batch_commit = self.current_time
+                
+                logger.info(json.dumps({
+                    "event": "batch_commit_success",
+                    "simulation_id": str(self.simulation_id),
+                    "updates_count": updates_count,
+                    "person_updates": len(person_updates),
+                    "trend_updates": len(trend_updates),
+                    "commit_time_ms": commit_time,
+                    "attempt": attempt + 1
+                }))
+                return
+                
+            except Exception as e:
+                if attempt < retry_attempts - 1:
+                    backoff_time = backoffs[min(attempt, len(backoffs) - 1)]
+                    logger.warning(json.dumps({
+                        "event": "batch_commit_retry",
+                        "error": str(e),
+                        "attempt": attempt + 1,
+                        "backoff_seconds": backoff_time
+                    }))
+                    await asyncio.sleep(backoff_time)
+                else:
+                    logger.error(json.dumps({
+                        "event": "batch_commit_failed",
+                        "error": str(e),
+                        "updates_lost": updates_count,
+                        "final_attempt": attempt + 1
+                    }))
+                    # Очистить batch даже при ошибке, чтобы избежать накопления
+                    self._batch_updates.clear()
         
     async def archive_inactive_trends(self) -> None:
         """
@@ -440,4 +542,82 @@ class SimulationEngine:
             "event": "simulation_shutdown",
             "final_time": self.current_time,
             "final_stats": self.get_simulation_stats()
+        }))
+        
+    def clear_event_queue(self) -> int:
+        """
+        Очищает очередь событий и возвращает количество удаленных событий.
+        
+        Returns:
+            Количество очищенных событий
+        """
+        cleared_count = len(self.event_queue)
+        self.event_queue.clear()
+        
+        logger.info(json.dumps({
+            "event": "event_queue_cleared",
+            "simulation_id": str(self.simulation_id) if self.simulation_id else None,
+            "cleared_events": cleared_count,
+            "current_time": self.current_time
+        }))
+        
+        return cleared_count
+        
+    async def stop_simulation(self, method: str = "graceful") -> None:
+        """
+        Останавливает симуляцию с указанным методом.
+        
+        Args:
+            method: "graceful" или "force"
+        """
+        stop_start_time = time.time()
+        
+        logger.info(json.dumps({
+            "event": "simulation_stop_initiated",
+            "simulation_id": str(self.simulation_id) if self.simulation_id else None,
+            "method": method,
+            "current_time": self.current_time,
+            "queue_size": len(self.event_queue),
+            "pending_batches": len(self._batch_updates)
+        }))
+        
+        if method == "graceful":
+            # Graceful stop: завершить текущие операции
+            self._running = False
+            
+            # Финальный batch commit
+            await self._batch_commit_states()
+            
+            # Очистить очередь событий
+            cleared_events = self.clear_event_queue()
+            
+            # Обновить статус симуляции в БД
+            if self.simulation_id:
+                await self.db_repo.update_simulation_status(
+                    self.simulation_id, 
+                    "STOPPED",
+                    datetime.utcnow().isoformat()
+                )
+                
+        elif method == "force":
+            # Force stop: немедленная остановка
+            self._running = False
+            
+            # Очистить очередь без batch commit
+            cleared_events = self.clear_event_queue()
+            
+            # Принудительно завершить в БД
+            if self.simulation_id:
+                await self.db_repo.force_complete_simulation(self.simulation_id)
+                
+        stop_duration = time.time() - stop_start_time
+        
+        logger.info(json.dumps({
+            "event": "simulation_stopped",
+            "simulation_id": str(self.simulation_id) if self.simulation_id else None,
+            "method": method,
+            "stop_duration_seconds": stop_duration,
+            "events_cleared": cleared_events,
+            "final_time": self.current_time,
+            "data_preserved": method == "graceful"
         })) 

@@ -43,7 +43,7 @@ jobs:
       postgres:
         image: postgres:15
         env:
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_TEST_PASSWORD || 'test_password_123' }}
           POSTGRES_DB: capsim_test
         options: >-
           --health-cmd pg_isready
@@ -54,7 +54,7 @@ jobs:
           - 5432:5432
           
     env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/capsim_test
+      DATABASE_URL: postgresql://postgres:${{ secrets.POSTGRES_TEST_PASSWORD || 'test_password_123' }}@localhost:5432/capsim_test
       DECIDE_SCORE_THRESHOLD: 0.25
       TREND_ARCHIVE_THRESHOLD_DAYS: 3
       BASE_RATE: 43.2
@@ -78,11 +78,12 @@ jobs:
         python -m pytest tests/ -v --tb=short --junitxml=test-results.xml
         
     - name: Upload test results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: test-results
         path: test-results.xml
+        retention-days: 30
 
   docker-build:
     name: Docker Build
@@ -124,7 +125,15 @@ jobs:
         output: 'trivy-results.sarif'
         
     - name: Upload Trivy scan results
-      uses: github/codeql-action/upload-sarif@v2
+      uses: github/codeql-action/upload-sarif@v3
       if: always()
       with:
-        sarif_file: 'trivy-results.sarif' 
+        sarif_file: 'trivy-results.sarif'
+        
+    - name: Upload security scan artifacts
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: security-scan-results
+        path: trivy-results.sarif
+        retention-days: 30 

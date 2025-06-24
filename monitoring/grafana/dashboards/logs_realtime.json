@@ -1,209 +1,246 @@
 {
-  "dashboard": {
-    "id": null,
-    "title": "CAPSIM 2.0 - Real-time Logs & Agent Actions",
-    "tags": ["capsim", "logs", "agents", "realtime"],
-    "timezone": "browser",
-    "refresh": "5s",
-    "schemaVersion": 27,
-    "version": 1,
-    "panels": [
-      {
-        "id": 1,
-        "title": "Agent Actions Stream",
-        "type": "logs",
-        "targets": [
-          {
-            "expr": "{service_name=\"app\"} |~ \"INSERT.*agent_action\"",
-            "refId": "A"
-          }
-        ],
-        "options": {
-          "showTime": true,
-          "showLabels": true,
-          "showCommonLabels": false,
-          "wrapLogMessage": true,
-          "prettifyLogMessage": true,
-          "enableLogDetails": true,
-          "dedupStrategy": "none",
-          "sortOrder": "Descending"
-        },
-        "gridPos": {
-          "h": 12,
-          "w": 24,
-          "x": 0,
-          "y": 0
+  "id": null,
+  "title": "CAPSIM 2.0 - Real-time Metrics & DB Operations",
+  "tags": ["capsim", "metrics", "database", "realtime"],
+  "timezone": "browser",
+  "refresh": "30s",
+  "schemaVersion": 27,
+  "version": 1,
+  "panels": [
+    {
+      "id": 1,
+      "title": "HTTP Requests Rate",
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "rate(capsim_http_requests_total[5m])",
+          "legendFormat": "{{endpoint}} ({{method}})",
+          "refId": "A"
         }
-      },
-      {
-        "id": 2,
-        "title": "INSERT Operations Count",
-        "type": "stat",
-        "targets": [
-          {
-            "expr": "count_over_time({service_name=\"app\"} |~ \"INSERT\" [5m])",
-            "refId": "A"
-          }
-        ],
-        "gridPos": {
-          "h": 4,
-          "w": 6,
-          "x": 0,
-          "y": 12
+      ],
+      "yAxes": [
+        {
+          "label": "requests/sec",
+          "show": true
         }
-      },
-      {
-        "id": 3,
-        "title": "Active Agents",
-        "type": "stat",
-        "targets": [
-          {
-            "expr": "count(count by (agent_id) (count_over_time({service_name=\"app\", entity_type=\"agent\"} [5m])))",
-            "refId": "A"
-          }
-        ],
-        "gridPos": {
-          "h": 4,
-          "w": 6,
-          "x": 6,
-          "y": 12
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": 2,
+      "title": "Active Simulations",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "capsim_simulations_active",
+          "refId": "A"
         }
+      ],
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 0
       },
-      {
-        "id": 4,
-        "title": "Simulation Events",
-        "type": "stat",
-        "targets": [
-          {
-            "expr": "count_over_time({service_name=\"app\", entity_type=\"simulation\"} [5m])",
-            "refId": "A"
-          }
-        ],
-        "gridPos": {
-          "h": 4,
-          "w": 6,
-          "x": 12,
-          "y": 12
-        }
-      },
-      {
-        "id": 5,
-        "title": "Log Levels",
-        "type": "piechart",
-        "targets": [
-          {
-            "expr": "sum by (level) (count_over_time({service_name=\"app\"} [5m]))",
-            "refId": "A"
-          }
-        ],
-        "gridPos": {
-          "h": 4,
-          "w": 6,
-          "x": 18,
-          "y": 12
-        }
-      },
-      {
-        "id": 6,
-        "title": "Agent Actions by Type",
-        "type": "bargauge",
-        "targets": [
-          {
-            "expr": "sum by (action_type) (count_over_time({service_name=\"app\"} |~ \"action_type\" [5m]))",
-            "refId": "A"
-          }
-        ],
-        "gridPos": {
-          "h": 8,
-          "w": 12,
-          "x": 0,
-          "y": 16
-        }
-      },
-      {
-        "id": 7,
-        "title": "Database Operations Timeline",
-        "type": "logs",
-        "targets": [
-          {
-            "expr": "{service_name=\"app\"} |~ \"INSERT|UPDATE|DELETE\"",
-            "refId": "A"
-          }
-        ],
-        "options": {
-          "showTime": true,
-          "showLabels": false,
-          "showCommonLabels": false,
-          "wrapLogMessage": false,
-          "prettifyLogMessage": false,
-          "enableLogDetails": true,
-          "dedupStrategy": "none",
-          "sortOrder": "Descending"
-        },
-        "gridPos": {
-          "h": 8,
-          "w": 12,
-          "x": 12,
-          "y": 16
-        }
-      },
-      {
-        "id": 8,
-        "title": "Error Logs",
-        "type": "logs",
-        "targets": [
-          {
-            "expr": "{service_name=\"app\", level=\"ERROR\"}",
-            "refId": "A"
-          }
-        ],
-        "options": {
-          "showTime": true,
-          "showLabels": true,
-          "showCommonLabels": false,
-          "wrapLogMessage": true,
-          "prettifyLogMessage": true,
-          "enableLogDetails": true,
-          "dedupStrategy": "none",
-          "sortOrder": "Descending"
-        },
-        "gridPos": {
-          "h": 6,
-          "w": 24,
-          "x": 0,
-          "y": 24
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
         }
       }
-    ],
-    "time": {
-      "from": "now-15m",
-      "to": "now"
     },
-    "timepicker": {
-      "refresh_intervals": ["5s", "10s", "30s", "1m", "5m"]
-    },
-    "templating": {
-      "list": [
+    {
+      "id": 3,
+      "title": "Total HTTP Requests",
+      "type": "stat",
+      "targets": [
         {
-          "name": "simulation_id",
-          "type": "query",
-          "query": "{service_name=\"app\"} |~ \"simulation_id\" | logfmt | line_format \"{{.simulation_id}}\" | dedup",
-          "refresh": "time"
+          "expr": "sum(capsim_http_requests_total)",
+          "refId": "A"
         }
-      ]
+      ],
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        }
+      }
     },
-    "annotations": {
-      "list": [
+    {
+      "id": 4,
+      "title": "Healthcheck Success Rate",
+      "type": "stat",
+      "targets": [
         {
-          "builtIn": 1, 
-          "datasource": "-- Grafana --",
-          "enable": true,
-          "hide": true,
-          "iconColor": "rgba(0, 211, 255, 1)",
-          "name": "Annotations & Alerts",
-          "type": "dashboard"
+          "expr": "rate(capsim_http_requests_total{endpoint=\"/healthz\",status=\"success\"}[5m])",
+          "refId": "A"
         }
-      ]
+      ],
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "reqps"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Metrics Collection Rate",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "rate(capsim_http_requests_total{endpoint=\"/metrics\"}[5m])",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "reqps"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "HTTP Requests by Endpoint",
+      "type": "bargauge",
+      "targets": [
+        {
+          "expr": "sum by (endpoint) (capsim_http_requests_total)",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "API Response Time (95th percentile)",
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(capsim_http_request_duration_seconds_bucket[5m]))",
+          "legendFormat": "95th percentile",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.50, rate(capsim_http_request_duration_seconds_bucket[5m]))",
+          "legendFormat": "50th percentile", 
+          "refId": "B"
+        }
+      ],
+      "yAxes": [
+        {
+          "label": "seconds",
+          "show": true
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      }
+    },
+    {
+      "id": 8,
+      "title": "HTTP Status Codes",
+      "type": "piechart",
+      "targets": [
+        {
+          "expr": "sum by (status) (capsim_http_requests_total)",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      }
+    },
+    {
+      "id": 9,
+      "title": "Request Methods",
+      "type": "piechart",
+      "targets": [
+        {
+          "expr": "sum by (method) (capsim_http_requests_total)",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      }
     }
+  ],
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": ["30s", "1m", "5m", "15m"]
+  },
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1, 
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
   }
 }

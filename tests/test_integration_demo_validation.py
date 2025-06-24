@@ -35,7 +35,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 # Use demo simulation classes for integration testing
 import sys
 sys.path.append('.')
-from demo_simulation import (
+from reports.demo_simulation import (
     DemoSimulationEngine, Person, Trend, PublishPostAction, 
     EnergyRecoveryEvent, DailyResetEvent, EventPriority
 )
@@ -107,7 +107,7 @@ class TestDemoResultsValidation:
         agents, simulation_id = configured_agents
         
         # Create test context
-        from demo_simulation import SimulationContext
+        from reports.demo_simulation import SimulationContext
         context = SimulationContext(100.0, {}, {})
         
         threshold = float(os.getenv("DECIDE_SCORE_THRESHOLD", "0.25"))

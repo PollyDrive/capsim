@@ -4,14 +4,30 @@
 help:
 	@echo "CAPSIM 2.0 - Agent-based Discrete Event Simulation"
 	@echo ""
-	@echo "Available targets:"
-	@echo "  dev-up       Start development environment"
-	@echo "  dev-down     Stop development environment"
-	@echo "  test         Run tests with pytest"
-	@echo "  lint         Run code quality checks (ruff + mypy)"
-	@echo "  bootstrap    Initialize system (migrations + data)"
-	@echo "  clean        Clean up containers and volumes"
-	@echo "  docker-build Build docker image"
+	@echo "🚀 Development:"
+	@echo "  dev-up         Start development environment"
+	@echo "  dev-down       Stop development environment"
+	@echo "  test           Run tests with pytest"
+	@echo "  lint           Run code quality checks (ruff + mypy)"
+	@echo "  bootstrap      Initialize system (migrations + data)"
+	@echo ""
+	@echo "🔐 Security:"
+	@echo "  setup-env      Create .env from .env.example template"
+	@echo "  validate-secrets   Check for placeholder secrets in .env"
+	@echo "  generate-passwords Generate secure random passwords"
+	@echo "  generate-jwt-secret Generate JWT secret (256-bit)"
+	@echo "  security-audit     Run complete security audit"
+	@echo ""
+	@echo "📊 Monitoring:"
+	@echo "  check-health   Check service health status"
+	@echo "  monitor-db     Database monitoring dashboard"
+	@echo "  metrics        Show current metrics"
+	@echo "  compose-logs   Show docker-compose logs"
+	@echo ""
+	@echo "🧹 Maintenance:"
+	@echo "  clean          Clean up containers and volumes"
+	@echo "  clean-logs     Clean Docker logs and system"
+	@echo "  docker-build   Build docker image"
 	@echo ""
 
 # Development environment
@@ -122,4 +138,79 @@ ci-local:
 	make lint
 	make test
 	make docker-build
-	@echo "✅ Local CI pipeline completed" 
+	@echo "✅ Local CI pipeline completed"
+
+# DevOps additions for monitoring and DB tracking
+compose-logs:
+	@echo "📋 Showing docker-compose logs..."
+	docker-compose logs -f --tail=50
+
+check-health:
+	@echo "🏥 Checking service health..."
+	@echo "API Health:"
+	@curl -s http://localhost:8000/healthz | jq . || echo "❌ API not responding"
+	@echo "\nPrometheus Targets:"
+	@curl -s http://localhost:9091/api/v1/targets | jq '.data.activeTargets[] | {job: .labels.job, health: .health}' || echo "❌ Prometheus not responding"
+
+monitor-db:
+	@echo "📊 Database monitoring..."
+	@echo "Active simulations:"
+	@psql postgresql://postgres:capsim321@localhost:5432/capsim_db -c "SELECT run_id, status, start_time, num_agents FROM capsim.simulation_runs ORDER BY start_time DESC LIMIT 5;" || echo "❌ Cannot connect to database"
+	@echo "\nTotal agents:"
+	@psql postgresql://postgres:capsim321@localhost:5432/capsim_db -c "SELECT COUNT(*) as total_agents FROM capsim.persons;" || echo "❌ Cannot query agents"
+
+clean-logs:
+	@echo "🧹 Cleaning Docker logs and system..."
+	docker system prune -f
+	@echo "✅ Cleanup completed"
+
+metrics:
+	@echo "📈 Current CAPSIM metrics:"
+	@curl -s http://localhost:8000/metrics | grep -E "capsim_" | head -10
+
+grafana-reload:
+	@echo "📊 Reloading Grafana..."
+	docker-compose restart grafana
+	@sleep 10
+	@echo "✅ Grafana reloaded"
+
+# Security commands
+setup-env:
+	@echo "🔐 Setting up environment..."
+	@if [ ! -f .env ]; then \
+		cp .env.example .env; \
+		echo "✅ Created .env from template"; \
+		echo "⚠️  Please edit .env with your actual secrets"; \
+		echo "   Run: nano .env"; \
+	else \
+		echo "✅ .env already exists"; \
+	fi
+
+validate-secrets:
+	@echo "🔍 Validating secret configuration..."
+	@if [ -f .env ]; then \
+		grep -q "change_me" .env && echo "❌ Found placeholder secrets in .env - please update them" || echo "✅ No placeholder secrets found"; \
+	else \
+		echo "❌ .env file not found - run 'make setup-env' first"; \
+	fi
+
+generate-jwt-secret:
+	@echo "🔐 Generating JWT secret (256-bit):"
+	@openssl rand -hex 32
+
+generate-passwords:
+	@echo "🔐 Generating secure passwords:"
+	@echo "POSTGRES_PASSWORD=$(shell openssl rand -base64 32)"
+	@echo "CAPSIM_RW_PASSWORD=$(shell openssl rand -base64 32)" 
+	@echo "CAPSIM_RO_PASSWORD=$(shell openssl rand -base64 32)"
+	@echo "GRAFANA_PASSWORD=$(shell openssl rand -base64 16)"
+
+security-audit:
+	@echo "🛡️ Running security audit..."
+	@echo "1. Checking .gitignore coverage..."
+	@grep -q ".env" .gitignore && echo "✅ .env files are gitignored" || echo "❌ .env not in .gitignore"
+	@echo "2. Checking for secrets in git history..."
+	@git log --all --full-history --grep="password\|secret\|token" --oneline | head -5
+	@echo "3. Checking environment setup..."
+	@make validate-secrets
+	@echo "✅ Security audit completed" 
