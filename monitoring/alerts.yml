@@ -44,4 +44,187 @@ groups:
           severity: critical
         annotations:
           summary: "Database connection lost"
-          description: "No active database connections detected for 2 minutes" 
+          description: "No active database connections detected for 2 minutes"
+
+  - name: capsim_critical_alerts
+    rules:
+      - alert: MultipleActiveSimulations
+        expr: capsim_simulations_active > 1
+        for: 0s
+        labels:
+          severity: critical
+          component: simulation_engine
+        annotations:
+          summary: "КРИТИЧЕСКОЕ НАРУШЕНИЕ: Обнаружено {{ $value }} активных симуляций!"
+          description: |
+            Система CAPSIM НЕ ДОЛЖНА запускать более одной симуляции одновременно.
+            
+            Текущее количество активных симуляций: {{ $value }}
+            
+            НЕМЕДЛЕННЫЕ ДЕЙСТВИЯ:
+            1. Проверить статус: python -m capsim status
+            2. Остановить лишние симуляции: python -m capsim stop --force
+            3. Проверить процессы: ps aux | grep capsim
+            4. Проверить БД: SELECT * FROM capsim.simulation_runs WHERE end_time IS NULL
+            
+            Это критическое нарушение архитектурных ограничений!
+
+      - alert: ZeroActiveSimulationsExpected
+        expr: capsim_simulations_active == 0 and up{job="capsim-api"} == 1
+        for: 5m
+        labels:
+          severity: info
+          component: simulation_engine
+        annotations:
+          summary: "Нет активных симуляций в течение 5 минут"
+          description: |
+            В системе нет активных симуляций более 5 минут.
+            Это нормальное состояние, если симуляции не запланированы.
+            
+            Для запуска новой симуляции:
+            python -m capsim run --agents 100 --days 1
+
+  - name: capsim_performance_alerts
+    rules:
+      - alert: HighEventLatency
+        expr: histogram_quantile(0.95, capsim_event_latency_ms_bucket) > 10
+        for: 3m
+        labels:
+          severity: warning
+          component: event_processor
+        annotations:
+          summary: "Высокая латентность обработки событий: {{ $value }}ms"
+          description: |
+            P95 латентность обработки событий превышает 10ms в течение 3 минут.
+            
+            Текущая P95 латентность: {{ $value }}ms
+            
+            Возможные причины:
+            - Высокая нагрузка на БД
+            - Переполнение очереди событий
+            - Проблемы с производительностью
+            
+            Проверить:
+            - Размер очереди: capsim_queue_length
+            - Загрузка БД: активные подключения
+            - Ресурсы системы: CPU/память
+
+      - alert: QueueOverflow
+        expr: capsim_queue_length > 5000
+        for: 1m
+        labels:
+          severity: warning
+          component: event_queue
+        annotations:
+          summary: "Переполнение очереди событий: {{ $value }} элементов"
+          description: |
+            Размер очереди событий превышает 5000 элементов.
+            
+            Текущий размер очереди: {{ $value }}
+            
+            Действия:
+            1. Проверить производительность обработки событий
+            2. Увеличить SIM_SPEED_FACTOR для ускорения
+            3. Проверить наличие deadlock'ов в БД
+            4. Рассмотреть остановку симуляции если проблема критична
+
+      - alert: BatchCommitErrors
+        expr: rate(capsim_batch_commit_errors_total[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "Высокая частота ошибок batch commit: {{ $value }}/sec"
+          description: |
+            Ошибки при batch commit в БД происходят чаще 0.1 раз в секунду.
+            
+            Частота ошибок: {{ $value }}/sec
+            
+            Проверить:
+            - Логи приложения на предмет SQL ошибок
+            - Доступность PostgreSQL
+            - Свободное место на диске
+            - Настройки подключения к БД
+
+  - name: capsim_infrastructure_alerts
+    rules:
+      - alert: CapsimAPIDown
+        expr: up{job="capsim-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "CAPSIM API недоступно"
+          description: |
+            CAPSIM API не отвечает более 1 минуты.
+            
+            Проверить:
+            - Статус контейнера: docker ps | grep capsim
+            - Логи: docker logs capsim-app-1
+            - Healthcheck: curl localhost:8000/healthz
+            
+            Перезапуск: docker-compose restart app
+
+      - alert: PostgreSQLDown
+        expr: up{job="postgres"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "PostgreSQL недоступна"
+          description: |
+            База данных PostgreSQL недоступна более 30 секунд.
+            
+            КРИТИЧНО: Все активные симуляции будут остановлены!
+            
+            Проверить:
+            - Статус контейнера: docker ps | grep postgres
+            - Логи: docker logs capsim-postgres-1
+            - Подключение: psql postgresql://postgres:capsim321@localhost:5432/capsim_db -c "SELECT 1"
+            
+            Перезапуск: docker-compose restart postgres
+
+      - alert: HighMemoryUsage
+        expr: capsim_memory_usage_bytes{type="rss"} > 1073741824  # 1GB
+        for: 5m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "Высокое потребление памяти: {{ $value | humanize }}B"
+          description: |
+            CAPSIM потребляет более 1GB памяти в течение 5 минут.
+            
+            Текущее потребление: {{ $value | humanize }}B
+            
+            Рекомендации:
+            - Проверить количество агентов в симуляции
+            - Очистить кеши и буферы
+            - Рассмотреть уменьшение batch_size
+            - Перезапустить симуляцию с меньшим количеством агентов
+
+      - alert: HighCPUUsage
+        expr: capsim_cpu_usage_percent > 85
+        for: 5m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "Высокая загрузка CPU: {{ $value }}%"
+          description: |
+            CAPSIM использует более 85% CPU в течение 5 минут.
+            
+            Текущая загрузка: {{ $value }}%
+            
+            Возможные причины:
+            - Слишком интенсивная симуляция (много агентов)
+            - Низкий SIM_SPEED_FACTOR (realtime режим)
+            - Проблемы с производительностью алгоритмов
+            
+            Рекомендации:
+            - Увеличить SIM_SPEED_FACTOR для ускорения
+            - Уменьшить количество агентов
+            - Оптимизировать настройки батчинга 

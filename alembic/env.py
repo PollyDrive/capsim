@@ -34,8 +34,14 @@ target_metadata = Base.metadata
 
 def get_url():
     """Get database URL from environment variables."""
-    password = os.getenv("CAPSIM_RW_PASSWORD", "capsim_password")
-    db_name = os.getenv("POSTGRES_DB", "capsim")
+    password = os.getenv("CAPSIM_RW_PASSWORD")
+    if not password:
+        raise ValueError("CAPSIM_RW_PASSWORD environment variable is required")
+    
+    db_name = os.getenv("POSTGRES_DB")
+    if not db_name:
+        raise ValueError("POSTGRES_DB environment variable is required")
+    
     return f"postgresql+psycopg2://capsim_rw:{password}@postgres:5432/{db_name}"
 
 

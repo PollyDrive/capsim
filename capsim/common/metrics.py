@@ -38,6 +38,47 @@ EVENT_COUNT = Counter(
     ['event_type', 'status']
 )
 
+# Database table metrics
+EVENTS_TABLE_INSERTS = Counter(
+    'capsim_events_table_inserts_total',
+    'Total INSERT operations into events table'
+)
+
+EVENTS_TABLE_ROWS = Gauge(
+    'capsim_events_table_rows_total',
+    'Total number of rows in events table'
+)
+
+EVENTS_INSERT_RATE = Gauge(
+    'capsim_events_insert_rate_per_minute',
+    'INSERT operations per minute into events table'
+)
+
+# Simulation tracking metrics
+SIMULATION_PARTICIPANTS = Gauge(
+    'capsim_simulation_participants_total',
+    'Total number of participants in active simulations',
+    ['simulation_id']
+)
+
+SIMULATION_DURATION_HOURS = Gauge(
+    'capsim_simulation_duration_hours',
+    'Duration of simulations in hours',
+    ['simulation_id']
+)
+
+SIMULATION_STATUS = Gauge(
+    'capsim_simulation_status',
+    'Status of simulations (1=running, 0=stopped)',
+    ['simulation_id', 'status']
+)
+
+SIMULATION_START_TIME = Gauge(
+    'capsim_simulation_start_timestamp',
+    'Start timestamp of simulations',
+    ['simulation_id']
+)
+
 # Queue metrics
 QUEUE_LENGTH = Gauge(
     'capsim_queue_length',
@@ -232,6 +273,37 @@ def update_resource_metrics(memory_bytes: Dict[str, int], cpu_percent: float):
     for mem_type, value in memory_bytes.items():
         MEMORY_USAGE.labels(type=mem_type).set(value)
     CPU_USAGE.set(cpu_percent)
+
+
+# New functions for events table tracking
+def track_events_table_insert():
+    """Track INSERT operation into events table."""
+    EVENTS_TABLE_INSERTS.inc()
+
+
+def update_events_table_metrics(total_rows: int, insert_rate_per_minute: float):
+    """Update events table metrics."""
+    EVENTS_TABLE_ROWS.set(total_rows)
+    EVENTS_INSERT_RATE.set(insert_rate_per_minute)
+
+
+def update_simulation_tracking(
+    simulation_id: str,
+    participants: int,
+    duration_hours: float,
+    status: str,
+    start_timestamp: float = None
+):
+    """Update simulation tracking metrics."""
+    SIMULATION_PARTICIPANTS.labels(simulation_id=simulation_id).set(participants)
+    SIMULATION_DURATION_HOURS.labels(simulation_id=simulation_id).set(duration_hours)
+    
+    # Set status (1 for running, 0 for stopped)
+    status_value = 1 if status == 'running' else 0
+    SIMULATION_STATUS.labels(simulation_id=simulation_id, status=status).set(status_value)
+    
+    if start_timestamp:
+        SIMULATION_START_TIME.labels(simulation_id=simulation_id).set(start_timestamp)
 
 
 def get_metrics() -> str:

@@ -10,38 +10,48 @@ class Settings:
     """Centralized configuration management."""
     
     # Database settings
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://capsim_rw:password@localhost:5432/capsim")
-    DATABASE_URL_RO: str = os.getenv("DATABASE_URL_RO", "postgresql://capsim_ro:password@localhost:5432/capsim")
+    DATABASE_URL: str = os.getenv("DATABASE_URL")
+    DATABASE_URL_RO: str = os.getenv("DATABASE_URL_RO")
     
-    # Simulation core settings
-    DECIDE_SCORE_THRESHOLD: float = float(os.getenv("DECIDE_SCORE_THRESHOLD", "0.25"))
-    BASE_RATE: float = float(os.getenv("BASE_RATE", "43.2"))
-    BATCH_SIZE: int = int(os.getenv("BATCH_SIZE", "100"))
+    def __post_init__(self):
+        """Validate required environment variables."""
+        if not self.DATABASE_URL:
+            raise ValueError("DATABASE_URL environment variable is required")
+        if not self.DATABASE_URL_RO:
+            raise ValueError("DATABASE_URL_RO environment variable is required")
+    
+    # Simulation core settings  
+    DECIDE_SCORE_THRESHOLD: float = float(os.getenv("DECIDE_SCORE_THRESHOLD"))
+    BASE_RATE: float = float(os.getenv("BASE_RATE"))
+    BATCH_SIZE: int = int(os.getenv("BATCH_SIZE"))
     
     # Realtime mode configuration  
-    SIM_SPEED_FACTOR: float = float(os.getenv("SIM_SPEED_FACTOR", "60"))
-    ENABLE_REALTIME: bool = os.getenv("ENABLE_REALTIME", "false").lower() == "true"
+    SIM_SPEED_FACTOR: float = float(os.getenv("SIM_SPEED_FACTOR"))
+    ENABLE_REALTIME: bool = os.getenv("ENABLE_REALTIME").lower() == "true"
     
     # Performance settings
-    BATCH_RETRY_ATTEMPTS: int = int(os.getenv("BATCH_RETRY_ATTEMPTS", "3"))
-    BATCH_RETRY_BACKOFFS: str = os.getenv("BATCH_RETRY_BACKOFFS", "1,2,4")
-    SHUTDOWN_TIMEOUT_SEC: int = int(os.getenv("SHUTDOWN_TIMEOUT_SEC", "30"))
-    MAX_QUEUE_SIZE: int = int(os.getenv("MAX_QUEUE_SIZE", "5000"))
+    BATCH_RETRY_ATTEMPTS: int = int(os.getenv("BATCH_RETRY_ATTEMPTS"))
+    BATCH_RETRY_BACKOFFS: str = os.getenv("BATCH_RETRY_BACKOFFS")
+    SHUTDOWN_TIMEOUT_SEC: int = int(os.getenv("SHUTDOWN_TIMEOUT_SEC"))
+    MAX_QUEUE_SIZE: int = int(os.getenv("MAX_QUEUE_SIZE"))
     
     # Cache settings
-    CACHE_TTL_MIN: int = int(os.getenv("CACHE_TTL_MIN", "2880"))
-    CACHE_MAX_SIZE: int = int(os.getenv("CACHE_MAX_SIZE", "10000"))
+    CACHE_TTL_MIN: int = int(os.getenv("CACHE_TTL_MIN"))
+    CACHE_MAX_SIZE: int = int(os.getenv("CACHE_MAX_SIZE"))
     
     # Trend settings
-    TREND_ARCHIVE_THRESHOLD_DAYS: int = int(os.getenv("TREND_ARCHIVE_THRESHOLD_DAYS", "3"))
+    TREND_ARCHIVE_THRESHOLD_DAYS: int = int(os.getenv("TREND_ARCHIVE_THRESHOLD_DAYS"))
     
     # Monitoring settings
-    ENABLE_METRICS: bool = os.getenv("ENABLE_METRICS", "true").lower() == "true"
-    METRICS_PORT: int = int(os.getenv("METRICS_PORT", "9090"))
+    ENABLE_METRICS: bool = os.getenv("ENABLE_METRICS").lower() == "true"
+    METRICS_PORT: int = int(os.getenv("METRICS_PORT"))
     
     # Logging settings
-    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
-    ENABLE_JSON_LOGS: bool = os.getenv("ENABLE_JSON_LOGS", "true").lower() == "true"
+    LOG_LEVEL: str = os.getenv("LOG_LEVEL")
+    ENABLE_JSON_LOGS: bool = os.getenv("ENABLE_JSON_LOGS").lower() == "true"
+    
+    # Docker integration
+    DOCKER_ENV: bool = os.getenv("DOCKER_ENV", "false").lower() == "true"
     
     @classmethod
     def get_batch_retry_backoffs(cls) -> list[float]:

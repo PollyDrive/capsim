@@ -14,6 +14,56 @@
 | 4 | AGENT_ACTION | Agent | Действия агентов (PublishPostAction, PurchaseAction, etc.) |
 | 5 | SYSTEM | System | Системные события (энергия, архивирование, сброс) |
 
+## Алгоритм назначения Timestamp
+
+### 1. Базовый принцип
+Все события используют **simulation time** в минутах от начала симуляции:
+- `timestamp = 0.0` - начало симуляции
+- `timestamp = 60.0` - 1 час симуляции  
+- `timestamp = 1440.0` - 1 день (24 часа) симуляции
+
+### 2. Системные события (фиксированные интервалы)
+```python
+# Восстановление энергии каждые 6 часов
+EnergyRecoveryEvent(timestamp=current_time + 360.0)
+
+# Ежедневный сброс временных бюджетов  
+DailyResetEvent(timestamp=current_time + 1440.0)
+
+# Сохранение дневной статистики
+SaveDailyTrendEvent(timestamp=current_time + 1440.0)
+```
+
+### 3. Действия агентов (с задержками)
+```python
+# Seed события: равномерно в первые 60 минут с jitter
+base_time = (i * 60.0 / selected_agents_count)
+jitter = random.uniform(-5.0, 5.0)  
+timestamp = current_time + max(1.0, base_time + jitter)
+
+# Ответные действия: случайная задержка 1-30 минут
+delay = random.uniform(1.0, 30.0)
+timestamp = current_time + delay
+
+# Влияние трендов: задержка 10-60 минут  
+response_delay = random.uniform(10.0, 60.0)
+timestamp = current_time + response_delay
+```
+
+### 4. События трендов (цепочечные)
+```python
+# TrendInfluenceEvent всегда через 5 минут после PublishPost
+influence_timestamp = publish_timestamp + 5.0
+
+# Каскадные ответы с экспоненциальным распределением
+next_response = current_time + random.expovariate(1.0/15.0)  # λ=15 минут
+```
+
+### 5. Ограничения времени
+- **Минимальная задержка**: 1.0 минута (для предотвращения одновременных событий)
+- **Максимальная очередь**: 5000 событий (graceful degradation)
+- **Временной бюджет**: агенты ограничены 43 действиями в день
+
 ## Detailed Event Specifications
 
 ### LAW Events (Priority 1)

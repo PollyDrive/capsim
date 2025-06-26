@@ -2,14 +2,14 @@
 Database models for CAPSIM 2.0 using SQLAlchemy 2.0.
 """
 
-from sqlalchemy import Column, Integer, String, Float, DateTime, Date, Text, ForeignKey, BOOLEAN, JSON
+from sqlalchemy import Column, Integer, String, Float, DateTime, Date, Text, ForeignKey, BOOLEAN, JSON, MetaData
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
 
-Base = declarative_base()
+Base = declarative_base(metadata=MetaData(schema="capsim"))
 
 
 class SimulationRun(Base):

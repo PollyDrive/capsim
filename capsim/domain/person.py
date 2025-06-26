@@ -4,7 +4,7 @@ Person - класс агента симуляции с атрибутами и �
 
 from typing import Dict, Optional, TYPE_CHECKING
 from uuid import UUID, uuid4
-from datetime import datetime
+from datetime import datetime, date
 from dataclasses import dataclass, field
 import random
 import os
@@ -28,14 +28,20 @@ class Person:
     id: UUID = field(default_factory=uuid4)
     profession: str = ""
     
+    # Personal information (REQUIRED for DB)
+    first_name: str = ""
+    last_name: str = ""
+    gender: str = ""
+    date_of_birth: Optional[date] = None
+    
     # Dynamic attributes (0.0-5.0 scale)
     financial_capability: float = 0.0
     trend_receptivity: float = 0.0
     social_status: float = 0.0
-    energy_level: float = 5.0
+    energy_level: float = 0.0  # ИСПРАВЛЕНО: убрал дефолт 5.0
     
     # Time and interaction tracking
-    time_budget: float = 2.5  # 0.0-5.0 float scale
+    time_budget: float = 0.0  # ИСПРАВЛЕНО: убрал дефолт 2.5
     exposure_history: Dict[str, datetime] = field(default_factory=dict)
     interests: Dict[str, float] = field(default_factory=dict)
     
@@ -200,70 +206,102 @@ class Person:
     @classmethod
     def create_random_agent(cls, profession: str, simulation_id: UUID) -> "Person":
         """
-        Создает случайного агента с заданной профессией.
+        Создает случайного агента с заданной профессией СТРОГО СОГЛАСНО ТЗ.
         
         Args:
-            profession: Профессия агента
+            profession: Профессия агента (один из 12 из ТЗ)
             simulation_id: ID симуляции
             
         Returns:
-            Новый экземпляр Person
+            Новый экземпляр Person с русскими именами и правильными атрибутами
         """
-        # Диапазоны атрибутов по профессиям из ТЗ (таблица 2.4)
-        profession_ranges = {
-            "ShopClerk": {
-                "financial_capability": (2, 4), "trend_receptivity": (1, 3), 
-                "social_status": (1, 3), "time_budget": (3, 5)
+        # РУССКИЕ ИМЕНА согласно полу
+        russian_names = {
+            "male": {
+                "first_names": ["Александр", "Алексей", "Андрей", "Антон", "Артём", "Владимир", "Дмитрий", 
+                               "Евгений", "Игорь", "Иван", "Максим", "Михаил", "Николай", "Павел", "Сергей"],
+                "last_names": ["Иванов", "Петров", "Сидоров", "Смирнов", "Кузнецов", "Попов", "Волков", 
+                              "Соколов", "Лебедев", "Козлов", "Новиков", "Морозов", "Борисов", "Романов"]
             },
-            "Worker": {
-                "financial_capability": (2, 4), "trend_receptivity": (1, 3),
-                "social_status": (1, 2), "time_budget": (3, 5)
-            },
-            "Developer": {
-                "financial_capability": (3, 5), "trend_receptivity": (3, 5),
-                "social_status": (2, 4), "time_budget": (2, 4)
-            },
-            "Politician": {
-                "financial_capability": (3, 5), "trend_receptivity": (3, 5),
-                "social_status": (4, 5), "time_budget": (2, 4)
-            },
-            "Blogger": {
-                "financial_capability": (2, 4), "trend_receptivity": (4, 5),
-                "social_status": (3, 5), "time_budget": (3, 5)
-            },
-            "Businessman": {
-                "financial_capability": (4, 5), "trend_receptivity": (2, 4),
-                "social_status": (4, 5), "time_budget": (2, 4)
-            },
-            "SpiritualMentor": {
-                "financial_capability": (1, 3), "trend_receptivity": (2, 5),
-                "social_status": (2, 4), "time_budget": (2, 4)
-            },
-            "Philosopher": {
-                "financial_capability": (1, 3), "trend_receptivity": (1, 3),
-                "social_status": (1, 3), "time_budget": (2, 4)
-            },
-            "Unemployed": {
-                "financial_capability": (1, 2), "trend_receptivity": (3, 5),
-                "social_status": (1, 2), "time_budget": (3, 5)
-            },
-            "Teacher": {
-                "financial_capability": (1, 3), "trend_receptivity": (1, 3),
-                "social_status": (2, 4), "time_budget": (2, 4)
-            },
-            "Artist": {
-                "financial_capability": (1, 3), "trend_receptivity": (2, 4),
-                "social_status": (2, 4), "time_budget": (3, 5)
-            },
-            "Doctor": {
-                "financial_capability": (2, 4), "trend_receptivity": (1, 3),
-                "social_status": (3, 5), "time_budget": (1, 2)
+            "female": {
+                "first_names": ["Анна", "Елена", "Мария", "Наталья", "Ольга", "Светлана", "Татьяна", 
+                               "Ирина", "Екатерина", "Юлия", "Людмила", "Галина", "Марина", "Дарья", "Алла"],
+                "last_names": ["Иванова", "Петрова", "Сидорова", "Смирнова", "Кузнецова", "Попова", "Волкова", 
+                              "Соколова", "Лебедева", "Козлова", "Новикова", "Морозова", "Борисова", "Романова"]
             }
         }
         
-        ranges = profession_ranges.get(profession, profession_ranges["Worker"])
+        # Генерируем пол и соответствующие имена
+        gender = random.choice(["male", "female"])
+        first_name = random.choice(russian_names[gender]["first_names"])
+        last_name = random.choice(russian_names[gender]["last_names"])
         
-        # Генерируем интересы согласно ТЗ (6 категорий интересов)
+        # Генерируем дату рождения (возраст 18-65 лет согласно ТЗ)
+        current_year = datetime.now().year
+        birth_year = random.randint(current_year - 65, current_year - 18)
+        birth_month = random.randint(1, 12)
+        birth_day = random.randint(1, 28)  # Безопасный день для всех месяцев
+        birth_date = date(birth_year, birth_month, birth_day)
+
+        # СТРОГИЕ ДИАПАЗОНЫ АТРИБУТОВ ПО ПРОФЕССИЯМ из ТЗ (таблица 2.4)
+        profession_ranges = {
+            "ShopClerk": {
+                "financial_capability": (2, 4), "trend_receptivity": (1, 3), 
+                "social_status": (1, 3), "energy_level": (2, 5), "time_budget": (3, 5)
+            },
+            "Worker": {
+                "financial_capability": (2, 4), "trend_receptivity": (1, 3),
+                "social_status": (1, 2), "energy_level": (2, 5), "time_budget": (3, 5)
+            },
+            "Developer": {
+                "financial_capability": (3, 5), "trend_receptivity": (3, 5),
+                "social_status": (2, 4), "energy_level": (2, 5), "time_budget": (2, 4)
+            },
+            "Politician": {
+                "financial_capability": (3, 5), "trend_receptivity": (3, 5),
+                "social_status": (4, 5), "energy_level": (2, 4), "time_budget": (2, 4)
+            },
+            "Blogger": {
+                "financial_capability": (2, 4), "trend_receptivity": (4, 5),
+                "social_status": (3, 5), "energy_level": (2, 5), "time_budget": (3, 5)
+            },
+            "Businessman": {
+                "financial_capability": (4, 5), "trend_receptivity": (2, 4),
+                "social_status": (4, 5), "energy_level": (2, 5), "time_budget": (2, 4)
+            },
+            "SpiritualMentor": {
+                "financial_capability": (1, 3), "trend_receptivity": (2, 5),
+                "social_status": (2, 4), "energy_level": (3, 5), "time_budget": (2, 4)
+            },
+            "Philosopher": {
+                "financial_capability": (1, 3), "trend_receptivity": (1, 3),
+                "social_status": (1, 3), "energy_level": (2, 4), "time_budget": (2, 4)
+            },
+            "Unemployed": {
+                "financial_capability": (1, 2), "trend_receptivity": (3, 5),
+                "social_status": (1, 2), "energy_level": (3, 5), "time_budget": (3, 5)
+            },
+            "Teacher": {
+                "financial_capability": (1, 3), "trend_receptivity": (1, 3),
+                "social_status": (2, 4), "energy_level": (1, 3), "time_budget": (2, 4)
+            },
+            "Artist": {
+                "financial_capability": (1, 3), "trend_receptivity": (2, 4),
+                "social_status": (2, 4), "energy_level": (4, 5), "time_budget": (3, 5)
+            },
+            "Doctor": {
+                "financial_capability": (2, 4), "trend_receptivity": (1, 3),
+                "social_status": (3, 5), "energy_level": (2, 4), "time_budget": (1, 2)
+            }
+        }
+        
+        # Проверяем что профессия есть в списке ТЗ
+        if profession not in profession_ranges:
+            raise ValueError(f"Профессия '{profession}' не найдена в ТЗ. Доступные: {list(profession_ranges.keys())}")
+            
+        ranges = profession_ranges[profession]
+
+        # ИНТЕРЕСЫ ПО ПРОФЕССИЯМ из ТЗ (таблица интересов)
         interest_ranges = {
             "ShopClerk": {
                 "Economics": (4.59, 5.0), "Wellbeing": (0.74, 1.34), "Spirituality": (0.64, 1.24),
@@ -315,28 +353,24 @@ class Person:
             }
         }
         
-        # Получаем диапазоны интересов для профессии
-        profession_interests = interest_ranges.get(profession, interest_ranges["Worker"])
+        # Генерируем интересы согласно профессии
+        profession_interests = interest_ranges[profession]
         base_interests = {}
         for interest_name, (min_val, max_val) in profession_interests.items():
-            base_interests[interest_name] = round(random.uniform(min_val, max_val), 2)
+            base_interests[interest_name] = round(random.uniform(min_val, max_val), 3)
         
-        # Добавляем energy_level диапазоны из ТЗ
-        energy_ranges = {
-            "ShopClerk": (2, 5), "Worker": (2, 5), "Developer": (2, 5), "Politician": (2, 4),
-            "Blogger": (2, 5), "Businessman": (2, 5), "SpiritualMentor": (3, 5), "Philosopher": (2, 4),
-            "Unemployed": (3, 5), "Teacher": (1, 3), "Artist": (4, 5), "Doctor": (2, 4)
-        }
-        
-        energy_range = energy_ranges.get(profession, (2, 5))
-        
+        # Генерируем атрибуты с округлением до 3 знаков
         return cls(
             profession=profession,
             simulation_id=simulation_id,
-            financial_capability=random.uniform(*ranges["financial_capability"]),
-            social_status=random.uniform(*ranges["social_status"]),
-            trend_receptivity=random.uniform(*ranges["trend_receptivity"]),
-            energy_level=random.uniform(*energy_range),
-            time_budget=random.randint(*ranges["time_budget"]),
+            first_name=first_name,
+            last_name=last_name,
+            gender=gender,
+            date_of_birth=birth_date,
+            financial_capability=round(random.uniform(*ranges["financial_capability"]), 3),
+            social_status=round(random.uniform(*ranges["social_status"]), 3),
+            trend_receptivity=round(random.uniform(*ranges["trend_receptivity"]), 3),
+            energy_level=round(random.uniform(*ranges["energy_level"]), 3),
+            time_budget=round(random.uniform(*ranges["time_budget"]), 3),
             interests=base_interests
         ) 

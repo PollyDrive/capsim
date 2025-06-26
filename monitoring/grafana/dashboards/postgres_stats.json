@@ -1,0 +1,101 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Persons Count",
+      "type": "stat",
+      "datasource": {
+        "type": "postgres",
+        "uid": "Postgres"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "Postgres"
+          },
+          "format": "table",
+          "rawSql": "SELECT count(*) FROM capsim.persons",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Events Count",
+      "type": "stat",
+      "datasource": {
+        "type": "postgres",
+        "uid": "Postgres"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "Postgres"
+          },
+          "format": "table",
+          "rawSql": "SELECT count(*) FROM capsim.events",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Trends Count",
+      "type": "stat",
+      "datasource": {
+        "type": "postgres",
+        "uid": "Postgres"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "Postgres"
+          },
+          "format": "table",
+          "rawSql": "SELECT count(*) FROM capsim.trends",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 37,
+  "style": "dark",
+  "tags": [],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "PostgreSQL Table Counts",
+  "uid": "pg-counts",
+  "version": 1,
+  "weekStart": ""
+} 

@@ -29,7 +29,7 @@ make check-health
 # Access services
 # API: http://localhost:8000
 # Grafana: http://localhost:3000 (admin:admin)
-# Prometheus: http://localhost:9091
+# Loki: http://localhost:3100
 ```
 
 ## 🏗 Architecture Overview
@@ -44,8 +44,8 @@ CAPSIM 2.0 построена на модульной архитектуре с 
          │                        │                        │
          ▼                        ▼                        ▼
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Prometheus    │    │   EventQueue    │    │ TrendProcessor  │
-│   Monitoring    │    │   Prioritized   │    │   Virality      │
+│   Grafana +     │    │   EventQueue    │    │ TrendProcessor  │
+│   Loki Logs     │    │   Prioritized   │    │   Virality      │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
 ```
 
@@ -80,8 +80,9 @@ CAPSIM 2.0 построена на модульной архитектуре с 
 - **Graceful degradation** при сбоях компонентов
 
 ### Monitoring & Observability
-- **Prometheus метрики**: HTTP requests, queue length, event latency, batch errors
-- **Grafana дашборды**: Overview, Real-time logs, Database monitoring
+- **PostgreSQL мониторинг**: Прямое подключение к БД для статистики таблиц
+- **Grafana дашборды**: Database counts, Real-time logs, Error tracking
+- **Loki логирование**: Централизованный сбор логов всех сервисов
 - **Healthchecks**: Автоматические проверки всех сервисов
 - **Structured logging**: JSON-формат с trace ID
 
@@ -226,8 +227,8 @@ make check-health
 # Логи в реальном времени
 make compose-logs
 
-# Метрики Prometheus
-curl http://localhost:9091/api/v1/query?query=capsim_simulations_active
+# Проверка Loki
+curl http://localhost:3100/ready
 ```
 
 ### Database Monitoring
@@ -249,15 +250,21 @@ WHERE created_at > NOW() - INTERVAL '1 hour';
 
 ### Grafana Dashboards
 
-- **CAPSIM Overview**: http://localhost:3000/d/capsim-overview
-  - HTTP request metrics
-  - Active simulations
-  - Queue length monitoring
+- **PostgreSQL Table Counts**: http://localhost:3000/d/pg-counts
+  - Persons table count (capsim.persons)
+  - Events table count (capsim.events)  
+  - Trends table count (capsim.trends)
+
+- **Events Real-time Monitoring**: http://localhost:3000/d/events-realtime
+  - Real-time INSERT operations into events table
+  - Detailed event parameters (event_type, agent_id, simulation_id)
+  - Events INSERT rate per minute
+  - Formatted event details with full context
   
-- **Real-time Logs**: http://localhost:3000/d/capsim-logs
-  - Agent activity streams
-  - Database operations
-  - Error tracking
+- **Logs Dashboard**: http://localhost:3000/d/logs-dashboard
+  - Application logs (capsim-app-1)
+  - PostgreSQL logs (capsim-postgres-1)
+  - Error logs across all services
 
 ### Performance Tuning
 
@@ -314,7 +321,6 @@ services:
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/healthz` | Health check |
-| `GET` | `/metrics` | Prometheus metrics |
 | `GET` | `/api/v1/status` | System status |
 
 ### Response Examples
@@ -418,11 +424,11 @@ docker-compose down postgres && docker-compose up -d postgres
 
 **Медленная обработка событий**:
 ```bash
-# Проверка размера очереди
-curl http://localhost:9091/api/v1/query?query=capsim_queue_length
+# Проверка логов приложения
+make app-logs
 
-# Анализ метрик latency
-curl http://localhost:9091/api/v1/query?query=capsim_event_latency_ms
+# Анализ статистики БД
+make monitor-db
 ```
 
 **Ошибки batch-commit**:
@@ -493,7 +499,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 - **API Documentation**: http://localhost:8000/docs
 - **Monitoring Dashboard**: http://localhost:3000
-- **Metrics**: http://localhost:9091
+- **Logs Aggregation**: http://localhost:3100
 - **Technical Specification**: `docs/requirements/tech v.1.5.md`
 
 ---

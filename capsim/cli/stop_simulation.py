@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
 """
-CLI для остановки симуляции CAPSIM.
+CLI для остановки симуляций CAPSIM.
 """
 
 import asyncio
-import os
 import sys
 import json
 import logging
-import signal
 from typing import Optional
+from datetime import datetime
 from uuid import UUID
 
-# Конфигурирование логирования  
+# Конфигурирование логирования
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -21,36 +20,26 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class SimulationStopperError(Exception):
-    """Ошибка при остановке симуляции."""
-    pass
-
-
 async def stop_simulation_cli(
     simulation_id: Optional[str] = None,
     force: bool = False,
-    database_url: Optional[str] = None,
-    timeout_seconds: int = 30
+    database_url: Optional[str] = None
 ) -> None:
     """
-    Останавливает запущенную симуляцию через CLI.
+    Останавливает активную симуляцию.
     
     Args:
-        simulation_id: ID симуляции для остановки (опционально)
-        force: Принудительная остановка без graceful shutdown
-        database_url: URL базы данных  
-        timeout_seconds: Таймаут для graceful shutdown
+        simulation_id: ID симуляции для остановки (если не указан, останавливает первую активную)
+        force: Принудительная остановка
+        database_url: URL базы данных
     """
     
-    print("🛑 CAPSIM Simulation Stopper")
-    print(f"⏱️  Timeout: {timeout_seconds} seconds")
-    print(f"🔧 Force mode: {'ON' if force else 'OFF'}")
+    print("🛑 CAPSIM - Остановка симуляции")
+    print("=" * 50)
     
     # Проверяем доступность зависимостей
     try:
-        from ..engine.simulation_engine import SimulationEngine
         from ..db.repositories import DatabaseRepository
-        from ..core.settings import settings
     except ImportError as e:
         print(f"❌ Ошибка импорта: {e}")
         print("📝 Убедитесь что установлены зависимости:")
@@ -59,67 +48,144 @@ async def stop_simulation_cli(
     
     # URL базы данных
     if not database_url:
-        database_url = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:pass@localhost/capsim")
-    
-    print(f"🗄️  База данных: {database_url}")
+        import os
+        database_url = os.getenv("DATABASE_URL")
+        if not database_url:
+            raise ValueError("DATABASE_URL environment variable is required")
     
     try:
         # Создаем репозиторий
         db_repo = DatabaseRepository(database_url)
         
-        # Поиск активных симуляций
+        print(f"🗄️  База данных: {database_url}")
+        print(f"⚙️  Режим: {'принудительный' if force else 'graceful'}")
+        print()
+        
+        # Получаем активные симуляции
+        active_simulations = await db_repo.get_active_simulations()
+        
+        if not active_simulations:
+            print("✅ Нет активных симуляций для остановки")
+            print("💡 Проверить статус: python -m capsim status")
+            await db_repo.close()
+            return
+        
+        # Выбираем симуляцию для остановки
+        target_simulation = None
+        
         if simulation_id:
-            target_simulation_id = UUID(simulation_id)
-            print(f"\n🎯 Целевая симуляция: {target_simulation_id}")
-        else:
-            print("\n🔍 Поиск активных симуляций...")
-            active_simulations = await db_repo.get_active_simulations()
-            
-            if not active_simulations:
-                print("✅ Активных симуляций не найдено")
-                return
+            # Ищем конкретную симуляцию
+            try:
+                target_id = UUID(simulation_id)
+                for sim in active_simulations:
+                    if sim.run_id == target_id:
+                        target_simulation = sim
+                        break
                 
-            print(f"📊 Найдено активных симуляций: {len(active_simulations)}")
-            for sim in active_simulations:
-                print(f"  • {sim.run_id} (статус: {sim.status}, агентов: {sim.num_agents})")
+                if not target_simulation:
+                    print(f"❌ Симуляция {simulation_id} не найдена среди активных")
+                    print("\n🔄 Активные симуляции:")
+                    for sim in active_simulations:
+                        print(f"   - {sim.run_id} (статус: {sim.status})")
+                    await db_repo.close()
+                    return
+                    
+            except ValueError:
+                print(f"❌ Неверный формат ID симуляции: {simulation_id}")
+                print("💡 ID должен быть в формате UUID, например: 2ed1315b-17a1-4b05-bdbc-11187f8270d5")
+                await db_repo.close()
+                return
+        else:
+            # Берем первую активную симуляцию
+            target_simulation = active_simulations[0]
+            print(f"🎯 Будет остановлена первая активная симуляция: {target_simulation.run_id}")
+        
+        # Отображаем информацию о симуляции
+        print(f"📊 Остановка симуляции:")
+        print(f"   🔄 ID: {target_simulation.run_id}")
+        print(f"   📈 Статус: {target_simulation.status}")
+        print(f"   👥 Агентов: {target_simulation.num_agents}")
+        print(f"   ⏰ Запущена: {target_simulation.start_time}")
+        
+        if target_simulation.start_time:
+            runtime = datetime.utcnow() - target_simulation.start_time
+            runtime_str = str(runtime).split('.')[0]  # Убираем микросекунды
+            print(f"   ⏱️  Время работы: {runtime_str}")
+        
+        print()
+        
+        # Подтверждение для принудительной остановки
+        if force:
+            print("⚠️  ВНИМАНИЕ: Принудительная остановка!")
+            print("   - Данные могут быть потеряны")
+            print("   - События в очереди будут отброшены")
+            print("   - Агенты могут остаться в неконсистентном состоянии")
+            print()
             
-            if len(active_simulations) == 1:
-                target_simulation_id = active_simulations[0].run_id
-                print(f"\n🎯 Автовыбор единственной симуляции: {target_simulation_id}")
-            else:
-                print("\n❌ Найдено несколько активных симуляций. Укажите simulation_id")
+            confirm = input("❓ Продолжить принудительную остановку? (yes/no): ")
+            if confirm.lower() not in ['yes', 'y', 'да', 'д']:
+                print("❌ Операция отменена")
+                await db_repo.close()
                 return
         
-        # Получаем информацию о симуляции
-        simulation_run = await db_repo.get_simulation_run(target_simulation_id)
-        if not simulation_run:
-            print(f"❌ Симуляция {target_simulation_id} не найдена")
-            return
-            
-        print(f"\n📋 Информация о симуляции:")
-        print(f"  ID: {simulation_run.run_id}")
-        print(f"  Статус: {simulation_run.status}")
-        print(f"  Агентов: {simulation_run.num_agents}")
-        print(f"  Дней: {simulation_run.duration_days}")
-        print(f"  Создана: {simulation_run.created_at}")
-        
-        if simulation_run.status not in ["RUNNING", "ACTIVE"]:
-            print(f"⚠️  Симуляция уже остановлена (статус: {simulation_run.status})")
-            return
-        
-        # Выполняем остановку
-        print(f"\n🛑 Остановка симуляции...")
+        # Остановка симуляции
+        print("🔄 Остановка симуляции...")
         
         if force:
-            await _force_stop_simulation(db_repo, target_simulation_id)
+            # Принудительная остановка
+            await db_repo.force_complete_simulation(target_simulation.run_id)
+            
+            # Очистка событий в очереди
+            cleared_events = await db_repo.clear_future_events(
+                target_simulation.run_id, 
+                force=True
+            )
+            
+            print(f"🚨 Принудительная остановка выполнена")
+            print(f"   🗑️  Очищено событий: {cleared_events}")
+            
         else:
-            await _graceful_stop_simulation(db_repo, target_simulation_id, timeout_seconds)
+            # Graceful остановка
+            await db_repo.update_simulation_status(
+                target_simulation.run_id,
+                "STOPPING"
+            )
+            
+            # Очистка будущих событий
+            cleared_events = await db_repo.clear_future_events(
+                target_simulation.run_id,
+                current_time=None,  # Текущее время симуляции (если доступно)
+                force=False
+            )
+            
+            # Обновляем статус на завершено
+            await db_repo.update_simulation_status(
+                target_simulation.run_id,
+                "COMPLETED",
+                datetime.utcnow()
+            )
+            
+            print(f"✅ Graceful остановка выполнена")
+            print(f"   🗑️  Очищено будущих событий: {cleared_events}")
+        
+        # Обновляем метрику Prometheus
+        try:
+            from ..common.metrics import SIMULATION_COUNT
+            remaining_active = await db_repo.get_active_simulations()
+            SIMULATION_COUNT.set(len(remaining_active))
+        except ImportError:
+            pass  # Метрики недоступны
+        
+        print()
+        print("✅ Симуляция успешно остановлена")
+        print("💡 Проверить статус: python -m capsim status")
+        print("🚀 Запустить новую: python -m capsim run --agents 100")
         
         # Закрываем соединение с БД
         await db_repo.close()
         
     except Exception as e:
-        print(f"\n❌ Ошибка при остановке симуляции: {e}")
+        print(f"\n❌ Ошибка: {e}")
         import traceback
         traceback.print_exc()
         
@@ -132,189 +198,25 @@ async def stop_simulation_cli(
         raise
 
 
-async def _graceful_stop_simulation(
-    db_repo: "DatabaseRepository", 
-    simulation_id: UUID, 
-    timeout_seconds: int
-) -> None:
-    """
-    Graceful остановка симуляции с очисткой очереди и batch commit.
-    
-    Args:
-        db_repo: Репозиторий базы данных
-        simulation_id: ID симуляции
-        timeout_seconds: Таймаут остановки
-    """
-    
-    print(f"⚡ Режим: Graceful stop (timeout: {timeout_seconds}s)")
-    
-    try:
-        # Создаем временный engine для контроля симуляции
-        # В реальной реализации здесь должен быть механизм межпроцессного взаимодействия
-        # Например, через Redis, сигналы или shared memory
-        
-        # Обновляем статус симуляции в БД
-        await db_repo.update_simulation_status(simulation_id, "STOPPING")
-        
-        logger.info(json.dumps({
-            "event": "simulation_stop_initiated", 
-            "simulation_id": str(simulation_id),
-            "method": "graceful",
-            "timeout_seconds": timeout_seconds,
-            "timestamp": asyncio.get_event_loop().time()
-        }))
-        
-        # Симуляция graceful shutdown с таймаутом
-        start_time = asyncio.get_event_loop().time()
-        
-        # В реальной реализации здесь должна быть отправка сигнала SIGTERM процессу симуляции
-        # и ожидание его завершения с очисткой ресурсов
-        
-        print("🔄 Отправка сигнала остановки...")
-        print("📝 Ожидание завершения batch operations...")
-        print("🧹 Очистка очереди событий...")
-        
-        # Симулируем процесс graceful shutdown
-        await asyncio.sleep(min(2.0, timeout_seconds))  # Имитация времени для graceful stop
-        
-        # Очистка будущих событий из БД (события с timestamp > current_time)
-        current_time = asyncio.get_event_loop().time()
-        await db_repo.clear_future_events(simulation_id, current_time)
-        
-        # Финальное обновление статуса
-        await db_repo.update_simulation_status(simulation_id, "STOPPED", 
-                                             end_time=current_time)
-        
-        stop_duration = asyncio.get_event_loop().time() - start_time
-        
-        logger.info(json.dumps({
-            "event": "simulation_stopped",
-            "simulation_id": str(simulation_id),
-            "method": "graceful", 
-            "stop_duration_seconds": stop_duration,
-            "queue_cleared": True,
-            "batch_committed": True,
-            "timestamp": current_time
-        }))
-        
-        print(f"✅ Симуляция остановлена успешно ({stop_duration:.2f}s)")
-        print("📊 Все данные сохранены")
-        print("🧹 Очередь событий очищена")
-        
-    except asyncio.TimeoutError:
-        print(f"⏰ Timeout {timeout_seconds}s достигнут, переключение на force mode")
-        await _force_stop_simulation(db_repo, simulation_id)
-        
-    except Exception as e:
-        logger.error(json.dumps({
-            "event": "graceful_stop_error",
-            "simulation_id": str(simulation_id),
-            "error": str(e),
-            "fallback_to_force": True
-        }))
-        
-        print(f"❌ Ошибка graceful stop: {e}")
-        print("🔄 Переключение на force mode...")
-        await _force_stop_simulation(db_repo, simulation_id)
-
-
-async def _force_stop_simulation(
-    db_repo: "DatabaseRepository",
-    simulation_id: UUID
-) -> None:
-    """
-    Принудительная остановка симуляции без graceful shutdown.
-    
-    Args:
-        db_repo: Репозиторий базы данных
-        simulation_id: ID симуляции
-    """
-    
-    print(f"⚡ Режим: Force stop")
-    
-    try:
-        start_time = asyncio.get_event_loop().time()
-        
-        logger.info(json.dumps({
-            "event": "simulation_force_stop_initiated",
-            "simulation_id": str(simulation_id),
-            "method": "force",
-            "timestamp": start_time
-        }))
-        
-        # Принудительное обновление статуса
-        await db_repo.update_simulation_status(simulation_id, "FORCE_STOPPED")
-        
-        # Принудительная очистка очереди событий
-        await db_repo.clear_future_events(simulation_id, force=True)
-        
-        # Принудительное завершение всех pending операций
-        await db_repo.force_complete_simulation(simulation_id)
-        
-        stop_duration = asyncio.get_event_loop().time() - start_time
-        
-        logger.info(json.dumps({
-            "event": "simulation_force_stopped",
-            "simulation_id": str(simulation_id),
-            "method": "force",
-            "stop_duration_seconds": stop_duration,
-            "data_loss_possible": True,
-            "timestamp": asyncio.get_event_loop().time()
-        }))
-        
-        print(f"✅ Симуляция принудительно остановлена ({stop_duration:.2f}s)")
-        print("⚠️  Возможна потеря незафиксированных данных")
-        
-    except Exception as e:
-        logger.error(json.dumps({
-            "event": "force_stop_error",
-            "simulation_id": str(simulation_id),
-            "error": str(e)
-        }))
-        raise SimulationStopperError(f"Ошибка принудительной остановки: {e}")
-
-
-def setup_signal_handlers():
-    """Настройка обработчиков сигналов для корректной остановки."""
-    
-    def signal_handler(signum, frame):
-        print(f"\n🛑 Получен сигнал {signum}, инициация остановки...")
-        # В реальной реализации здесь должна быть логика graceful shutdown
-        sys.exit(0)
-    
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-
-
 def main():
     """Main CLI entry point."""
     import argparse
     
-    parser = argparse.ArgumentParser(description="CAPSIM Simulation Stopper")
-    parser.add_argument("--simulation-id", type=str, 
-                        help="ID симуляции для остановки (если не указан, остановит единственную активную)")
-    parser.add_argument("--force", action="store_true", 
-                        help="Принудительная остановка без graceful shutdown")
-    parser.add_argument("--timeout", type=int, default=30,
-                        help="Таймаут для graceful shutdown (секунды)")
-    parser.add_argument("--db-url", type=str, 
-                        help="URL базы данных")
+    parser = argparse.ArgumentParser(description="CAPSIM Stop - Остановка симуляций")
+    parser.add_argument('simulation_id', nargs='?', help='ID симуляции для остановки (опционально)')
+    parser.add_argument("--force", action="store_true", help="Принудительная остановка")
+    parser.add_argument("--db-url", type=str, help="URL базы данных")
     
     args = parser.parse_args()
-    
-    # Настройка обработчиков сигналов
-    setup_signal_handlers()
     
     try:
         asyncio.run(stop_simulation_cli(
             simulation_id=args.simulation_id,
             force=args.force,
-            database_url=args.db_url,
-            timeout_seconds=args.timeout
+            database_url=args.db_url
         ))
-        
     except KeyboardInterrupt:
-        print("\n⚠️  Остановка прервана пользователем")
+        print("\n⚠️  Операция прервана пользователем")
         sys.exit(1)
     except Exception as e:
         print(f"\n💥 Критическая ошибка: {e}")

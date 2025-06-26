@@ -120,16 +120,40 @@ class PublishPostAction(BaseEvent):
         else:
             coverage = CoverageLevel.LOW.value
             
+        # ИСПРАВЛЕНИЕ: Проверяем является ли это ответом на существующий тренд
+        parent_trend_id = None
+        
+        # Ищем последний активный тренд той же темы (возможный parent)
+        for trend in engine.active_trends.values():
+            if (trend.topic == self.topic and 
+                trend.originator_id != agent.id and
+                trend.total_interactions > 0):
+                parent_trend_id = trend.trend_id
+                break  # Берем первый найденный активный тренд как родительский
+            
         new_trend = Trend.create_from_action(
             topic=self.topic,
             originator_id=self.agent_id,
             simulation_id=agent.simulation_id,
             base_virality=base_virality,
-            coverage_level=coverage
+            coverage_level=coverage,
+            parent_id=parent_trend_id  # ИСПРАВЛЕНИЕ: Используем parent_trend_id
         )
         
         # Добавить тренд в активные тренды
         engine.active_trends[str(new_trend.trend_id)] = new_trend
+        
+        # ИСПРАВЛЕНИЕ: Сохранить тренд в базу данных
+        engine.add_to_batch_update({
+            "type": "trend_creation",
+            "trend_id": new_trend.trend_id,
+            "simulation_id": new_trend.simulation_id,
+            "topic": new_trend.topic,
+            "originator_id": new_trend.originator_id,
+            "base_virality_score": new_trend.base_virality_score,
+            "coverage_level": new_trend.coverage_level,
+            "timestamp": self.timestamp
+        })
         
         # Обновить состояние агента
         agent.update_state({
@@ -141,13 +165,17 @@ class PublishPostAction(BaseEvent):
         # Добавить в batch обновления
         engine.add_to_batch_update({
             "type": "person_state",
-            "person_id": self.agent_id,
+            "id": self.agent_id,
             "energy_level": agent.energy_level,
             "time_budget": agent.time_budget,
             "social_status": agent.social_status,
             "reason": "PublishPostAction",
             "timestamp": self.timestamp
         })
+        
+        # КРИТИЧЕСКИ ВАЖНО: Пометить что нужен принудительный commit для сохранения тренда
+        # Это предотвращает FK нарушения при создании TrendInfluenceEvent
+        engine._force_commit_after_this_event = True
         
         # Запланировать распространение влияния тренда
         influence_event = TrendInfluenceEvent(
@@ -196,7 +224,7 @@ class EnergyRecoveryEvent(BaseEvent):
                 recovery_count += 1
                 batch_updates.append({
                     "type": "person_state", 
-                    "person_id": agent.id,
+                    "id": agent.id,
                     "energy_level": agent.energy_level,
                     "reason": "EnergyRecovery",
                     "timestamp": self.timestamp
@@ -270,7 +298,7 @@ class DailyResetEvent(BaseEvent):
                 reset_count += 1
                 batch_updates.append({
                     "type": "person_state",
-                    "person_id": agent.id, 
+                    "id": agent.id,
                     "time_budget": agent.time_budget,
                     "reason": "DailyReset",
                     "timestamp": self.timestamp
@@ -284,10 +312,29 @@ class DailyResetEvent(BaseEvent):
         next_reset = DailyResetEvent(self.timestamp + 1440.0)
         engine.add_event(next_reset, EventPriority.SYSTEM, next_reset.timestamp)
         
+        # НОВОЕ: Сбрасываем ежедневные счетчики действий агентов
+        current_day = int(self.timestamp // 1440)
+        if hasattr(engine, '_daily_action_counts'):
+            # Удаляем счетчики предыдущих дней
+            keys_to_remove = []
+            for key in engine._daily_action_counts:
+                if key.endswith(f"_{current_day - 1}") or key.endswith(f"_{current_day - 2}"):
+                    keys_to_remove.append(key)
+            
+            for key in keys_to_remove:
+                del engine._daily_action_counts[key]
+                
+            logger.info(json.dumps({
+                "event": "daily_action_counters_cleaned",
+                "removed_keys": len(keys_to_remove),
+                "current_day": current_day,
+                "timestamp": self.timestamp
+            }))
+        
         logger.info(json.dumps({
             "event": "daily_reset_completed",
-            "agents_reset": reset_count,
-            "next_reset_at": self.timestamp + 1440.0,
+            "budgets_reset": reset_count,
+            "next_reset_time": self.timestamp + 1440.0,
             "timestamp": self.timestamp
         }))
 
@@ -394,7 +441,7 @@ class TrendInfluenceEvent(BaseEvent):
         
     def process(self, engine: "SimulationEngine") -> None:
         """
-        Обрабатывает распространение влияния тренда на агентов.
+        Обрабатывает распространение влияния тренда через пакеты updatestate.
         """
         # Найти тренд
         trend = engine.active_trends.get(str(self.trend_id))
@@ -406,12 +453,14 @@ class TrendInfluenceEvent(BaseEvent):
             }))
             return
             
-        # TODO: Process trend influence through PersonInfluence
-        influenced_agents = 0
-        
-        # Базовая логика влияния тренда
+        # Рассчитываем параметры влияния
         current_virality = trend.calculate_current_virality()
         coverage_factor = trend.get_coverage_factor()
+        
+        # Создаем пакеты updatestate для всех затронутых агентов
+        update_state_batch = []
+        new_actions_batch = []
+        influenced_agents = 0
         
         for agent in engine.agents:
             # Агент не влияет сам на себя
@@ -428,63 +477,86 @@ class TrendInfluenceEvent(BaseEvent):
             
             import random
             if random.random() < influence_probability:
-                # Влияние на агента
+                # Рассчитываем силу влияния
                 influence_strength = min(0.5, current_virality * 0.1)
                 
-                agent.update_state({
-                    "trend_receptivity": influence_strength * 0.2,
-                    "social_status": influence_strength * 0.1
-                })
+                # Создаем пакет updatestate для агента
+                update_state = {
+                    "agent_id": agent.id,
+                    "attribute_changes": {
+                        "trend_receptivity": influence_strength * 0.2,
+                        "social_status": influence_strength * 0.1,
+                        "energy_level": -0.1  # Небольшая усталость от просмотра
+                    },
+                    "reason": "TrendInfluence",
+                    "source_trend_id": trend.trend_id,
+                    "timestamp": self.timestamp
+                }
+                update_state_batch.append(update_state)
                 
-                # Добавить взаимодействие с трендом
+                # Применяем изменения к агенту
+                agent.update_state(update_state["attribute_changes"])
+                
+                # Добавляем взаимодействие с трендом
                 trend.add_interaction()
                 influenced_agents += 1
                 
-                # ИСПРАВЛЕНИЕ: Сохранить взаимодействие в БД
-                engine.add_to_batch_update({
-                    "type": "trend_interaction",
-                    "trend_id": trend.trend_id,
-                    "agent_id": agent.id,
-                    "interaction_type": "influence",
-                    "timestamp": self.timestamp
-                })
+                # Записываем в историю воздействий
+                agent.exposure_history[str(trend.trend_id)] = self.timestamp
                 
-                # Записать в историю воздействий
-                agent.exposure_history[str(trend.trend_id)] = engine.current_time
-                
-                # ИСПРАВЛЕНИЕ: Агент может создать новый тренд в ответ на влияние
-                # Вероятность зависит от силы влияния и социального статуса
+                # Проверяем возможность создания ответного действия
                 response_probability = (
                     influence_strength * 
                     agent.social_status / 5.0 * 
                     0.3  # Базовая вероятность ответа
                 )
                 
-                if random.random() < response_probability and agent.energy_level >= 1.0:
-                    # Планируем новый пост через 10-60 минут
-                    response_delay = random.uniform(10.0, 60.0)
-                    response_topic = agent._select_best_topic()
+                if (random.random() < response_probability and 
+                    agent.energy_level >= 1.0 and 
+                    engine._can_agent_act_today(agent.id)):
                     
+                    # Создаем контекст для выбора темы
+                    from ..engine.simulation_engine import SimulationContext
+                    context = SimulationContext(
+                        current_time=self.timestamp,
+                        active_trends=engine.active_trends,
+                        affinity_map=engine.affinity_map
+                    )
+                    
+                    response_topic = agent._select_best_topic(context)
                     if response_topic:
-                        response_event = PublishPostAction(
-                            agent_id=agent.id,
-                            topic=response_topic,
-                            timestamp=self.timestamp + response_delay
-                        )
-                        engine.add_event(response_event, EventPriority.AGENT_ACTION, response_event.timestamp)
-                        
-                        logger.info(json.dumps({
-                            "event": "response_post_scheduled",
-                            "responding_agent": str(agent.id),
-                            "original_trend": str(trend.trend_id),
-                            "response_topic": response_topic,
-                            "delay_minutes": response_delay
-                        }))
+                        # Создаем будущее действие
+                        response_delay = random.uniform(10.0, 60.0)
+                        new_action = {
+                            "agent_id": agent.id,
+                            "action_type": "PublishPostAction",
+                            "topic": response_topic,
+                            "timestamp": self.timestamp + response_delay,
+                            "trigger_trend_id": trend.trend_id
+                        }
+                        new_actions_batch.append(new_action)
+        
+        # Пакетная обработка updatestate
+        if update_state_batch:
+            engine._process_update_state_batch(update_state_batch)
+            
+        # Пакетное планирование новых действий
+        if new_actions_batch:
+            scheduled_count = engine._schedule_actions_batch(new_actions_batch)
+            
+            logger.info(json.dumps({
+                "event": "response_actions_scheduled",
+                "original_trend": str(trend.trend_id),
+                "scheduled_count": scheduled_count,
+                "timestamp": self.timestamp
+            }))
         
         logger.info(json.dumps({
             "event": "trend_influence_processed",
             "trend_id": str(self.trend_id),
             "influenced_agents": influenced_agents,
+            "update_states_created": len(update_state_batch),
+            "new_actions_scheduled": len(new_actions_batch),
             "total_interactions": trend.total_interactions,
             "current_virality": current_virality,
             "timestamp": self.timestamp

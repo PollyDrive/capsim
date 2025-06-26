@@ -21,8 +21,9 @@ logger = logging.getLogger(__name__)
 
 async def run_simulation_cli(
     num_agents: int = 100,
-    duration_days: int = 1,
-    database_url: Optional[str] = None
+    duration_days: float = 1.0,
+    database_url: Optional[str] = None,
+    sim_speed_factor: float = 1.0
 ) -> None:
     """
     Запускает симуляцию через CLI.
@@ -31,11 +32,13 @@ async def run_simulation_cli(
         num_agents: Количество агентов
         duration_days: Продолжительность в днях
         database_url: URL базы данных
+        sim_speed_factor: Фактор скорости симуляции (1.0 = реальное время)
     """
     
     print("🚀 Запуск CAPSIM Simulation Engine")
     print(f"📊 Агентов: {num_agents}")
     print(f"⏱️  Продолжительность: {duration_days} дней")
+    print(f"⚡ Скорость симуляции: {sim_speed_factor}x")
     
     # Проверяем доступность зависимостей
     try:
@@ -49,11 +52,16 @@ async def run_simulation_cli(
     
     # URL базы данных
     if not database_url:
-        database_url = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:pass@localhost/capsim")
+        database_url = os.getenv("DATABASE_URL")
+        if not database_url:
+            raise ValueError("DATABASE_URL environment variable is required")
     
     print(f"🗄️  База данных: {database_url}")
     
     try:
+        # Устанавливаем SIM_SPEED_FACTOR в настройки
+        os.environ["SIM_SPEED_FACTOR"] = str(sim_speed_factor)
+        
         # Создаем репозиторий и движок
         db_repo = DatabaseRepository(database_url)
         engine = SimulationEngine(db_repo)
@@ -105,8 +113,9 @@ def main():
     
     parser = argparse.ArgumentParser(description="CAPSIM Simulation Engine")
     parser.add_argument("--agents", type=int, default=100, help="Количество агентов")
-    parser.add_argument("--days", type=int, default=1, help="Продолжительность в днях")
+    parser.add_argument("--days", type=float, default=1, help="Продолжительность в днях")
     parser.add_argument("--db-url", type=str, help="URL базы данных")
+    parser.add_argument("--speed", type=float, default=1.0, help="Фактор скорости симуляции")
     parser.add_argument("--test", action="store_true", help="Режим тестирования (короткая симуляция)")
     
     args = parser.parse_args()
@@ -121,7 +130,8 @@ def main():
         asyncio.run(run_simulation_cli(
             num_agents=args.agents,
             duration_days=args.days,
-            database_url=args.db_url
+            database_url=args.db_url,
+            sim_speed_factor=args.speed
         ))
     except KeyboardInterrupt:
         print("\n⚠️  Симуляция прервана пользователем")

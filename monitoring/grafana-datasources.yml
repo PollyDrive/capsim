@@ -1,12 +1,20 @@
 apiVersion: 1
 
 datasources:
-  - name: Prometheus
-    type: prometheus
+  - name: Postgres
+    type: postgres
     access: proxy
-    url: http://prometheus:9090
+    url: postgres:5432
+    user: postgres
+    password: postgres_password
+    database: capsim_db
     isDefault: true
-    
+    editable: true
+    jsonData:
+      sslmode: 'disable'
+      postgresVersion: 1500
+      timescaledb: false
+      
   - name: Loki
     type: loki
     access: proxy

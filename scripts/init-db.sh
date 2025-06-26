@@ -7,9 +7,9 @@ set -e
 echo "Initializing CAPSIM database users..."
 
 # Use environment variables or defaults
-CAPSIM_RW_PASSWORD=${CAPSIM_RW_PASSWORD:-capsim_password}
-CAPSIM_RO_PASSWORD=${CAPSIM_RO_PASSWORD:-capsim_password}
-POSTGRES_DB=${POSTGRES_DB:-capsim}
+CAPSIM_RW_PASSWORD=${CAPSIM_RW_PASSWORD}
+CAPSIM_RO_PASSWORD=${CAPSIM_RO_PASSWORD}
+POSTGRES_DB=${POSTGRES_DB:-capsim_db}
 
 # Create read-write user for the application
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL

@@ -5,21 +5,24 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
-      - "9090:9090"  # Metrics port
+    env_file:
+      - .env
     environment:
-      - DATABASE_URL=postgresql://capsim_rw:${CAPSIM_RW_PASSWORD:-capsim_password}@postgres:5432/${POSTGRES_DB:-capsim}
-      - DATABASE_URL_RO=postgresql://capsim_ro:${CAPSIM_RO_PASSWORD:-capsim_password}@postgres:5432/${POSTGRES_DB:-capsim}
-      - POSTGRES_DB=${POSTGRES_DB:-capsim}
-      - CAPSIM_RW_PASSWORD=${CAPSIM_RW_PASSWORD:-capsim_password}
-      - CAPSIM_RO_PASSWORD=${CAPSIM_RO_PASSWORD:-capsim_password}
+      - DATABASE_URL=postgresql+asyncpg://capsim_rw:${CAPSIM_RW_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - DATABASE_URL_RO=postgresql+asyncpg://capsim_ro:${CAPSIM_RO_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - CAPSIM_RW_PASSWORD=${CAPSIM_RW_PASSWORD}
+      - CAPSIM_RO_PASSWORD=${CAPSIM_RO_PASSWORD}
       - DOCKER_ENV=true
-      - DECIDE_SCORE_THRESHOLD=${DECIDE_SCORE_THRESHOLD:-0.15}
-      - TREND_ARCHIVE_THRESHOLD_DAYS=${TREND_ARCHIVE_THRESHOLD_DAYS:-3}
-      - BASE_RATE=${BASE_RATE:-86.4}
-      - BATCH_SIZE=${BATCH_SIZE:-20}
-      - ENABLE_METRICS=${ENABLE_METRICS:-true}
-      - LOG_LEVEL=${LOG_LEVEL:-WARNING}
-      - ENABLE_JSON_LOGS=${ENABLE_JSON_LOGS:-true}
+      - DECIDE_SCORE_THRESHOLD=${DECIDE_SCORE_THRESHOLD}
+      - TREND_ARCHIVE_THRESHOLD_DAYS=${TREND_ARCHIVE_THRESHOLD_DAYS}
+      - BASE_RATE=${BASE_RATE}
+      - BATCH_SIZE=${BATCH_SIZE}
+      - ENABLE_METRICS=${ENABLE_METRICS}
+      - LOG_LEVEL=${LOG_LEVEL}
+      - ENABLE_JSON_LOGS=${ENABLE_JSON_LOGS}
     labels:
       logging: "promtail"
       service.name: "capsim-app"
@@ -45,39 +48,27 @@ services:
     image: postgres:15
     ports:
       - "5432:5432"
+    env_file:
+      - .env
     environment:
-      - POSTGRES_DB=${POSTGRES_DB:-capsim}
-      - POSTGRES_USER=${POSTGRES_USER:-postgres}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres_password}
-      - CAPSIM_RW_PASSWORD=${CAPSIM_RW_PASSWORD:-capsim_password}
-      - CAPSIM_RO_PASSWORD=${CAPSIM_RO_PASSWORD:-capsim_password}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - CAPSIM_RW_PASSWORD=${CAPSIM_RW_PASSWORD}
+      - CAPSIM_RO_PASSWORD=${CAPSIM_RO_PASSWORD}
     labels:
       logging: "promtail"
       service.name: "capsim-postgres"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
+      - ./monitoring/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
       interval: 5s
       timeout: 5s
       retries: 5
-
-  prometheus:
-    image: prom/prometheus:v2.40.0
-    ports:
-      - "9091:9090"
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/etc/prometheus/console_libraries'
-      - '--web.console.templates=/etc/prometheus/consoles'
-      - '--storage.tsdb.retention.time=200h'
-      - '--web.enable-lifecycle'
-    volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
-      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml
-      - prometheus_data:/prometheus
 
   loki:
     image: grafana/loki:2.9.0
@@ -106,21 +97,21 @@ services:
     image: grafana/grafana:9.2.0
     ports:
       - "3000:3000"
+    env_file:
+      - .env
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
       - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - grafana_data:/var/lib/grafana
       - ./monitoring/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml
-      - ./monitoring/grafana/provisioning.yml:/etc/grafana/provisioning/dashboards/dashboards.yml
+      - ./monitoring/grafana/dashboards/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml
       - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
     depends_on:
-      - prometheus
       - loki
 
 volumes:
   postgres_data:
-  prometheus_data:
   grafana_data:
   loki_data:
   promtail_data:

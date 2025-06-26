@@ -15,6 +15,12 @@ except ImportError:
     import logging
     STRUCTLOG_AVAILABLE = False
 
+try:
+    from capsim.common.metrics import track_events_table_insert
+    METRICS_AVAILABLE = True
+except ImportError:
+    METRICS_AVAILABLE = False
+
 # Use structlog if available, otherwise standard logging
 if STRUCTLOG_AVAILABLE:
     logger = get_logger(__name__)
@@ -67,6 +73,10 @@ class DatabaseLogger:
                 **log_data
             })
             logger.info(log_message)
+        
+        # Track events table inserts for metrics
+        if METRICS_AVAILABLE and table_name.lower() == 'events':
+            track_events_table_insert()
     
     def log_agent_action(
         self, 
@@ -156,6 +166,31 @@ class DatabaseLogger:
             },
             correlation_id=correlation_id
         )
+    
+    def log_event_insert(
+        self,
+        event_id: str,
+        event_type: str,
+        participant_id: Optional[str] = None,
+        event_data: Dict[str, Any] = None,
+        correlation_id: Optional[str] = None,
+        simulation_id: Optional[str] = None
+    ):
+        """Log INSERT operation into events table."""
+        self.log_insert(
+            table_name="events",
+            entity_type="event",
+            entity_id=event_id,
+            data={
+                "event_id": event_id,
+                "event_type": event_type,
+                "participant_id": participant_id,
+                "event_timestamp": datetime.utcnow().isoformat(),
+                **(event_data or {})
+            },
+            correlation_id=correlation_id,
+            simulation_id=simulation_id
+        )
 
 
 # Global instance
@@ -180,4 +215,9 @@ def log_trend_update(trend_id: str, update_type: str, trend_data: Dict[str, Any]
 
 def log_batch_operation(batch_id: str, operation_type: str, batch_size: int, affected_tables: list, **kwargs):
     """Log batch operation."""
-    db_logger.log_batch_operation(batch_id, operation_type, batch_size, affected_tables, **kwargs) 
+    db_logger.log_batch_operation(batch_id, operation_type, batch_size, affected_tables, **kwargs)
+
+
+def log_event_insert(event_id: str, event_type: str, **kwargs):
+    """Log INSERT operation into events table."""
+    db_logger.log_event_insert(event_id, event_type, **kwargs) 

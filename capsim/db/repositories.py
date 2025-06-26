@@ -4,10 +4,11 @@ Database repositories for CAPSIM 2.0 - CRUD operations and batch processing.
 
 import json
 import logging
-from datetime import datetime
-from typing import List, Dict, Optional, Any
+from datetime import datetime, date
+from typing import List, Dict, Optional, Any, Set
 from uuid import UUID
 
+from faker import Faker
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import select, insert, update, delete, text
@@ -20,6 +21,71 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
+# Глобальная переменная для трекинга уникальных имен в сессии
+_used_names: Set[str] = set()
+
+def generate_russian_name(gender: str = None) -> Dict[str, str]:
+    """
+    Генерирует русское имя и фамилию с помощью faker.
+    
+    Args:
+        gender: "male" или "female". Если None, выбирается случайно.
+        
+    Returns:
+        Dict с ключами {"first_name": str, "last_name": str, "gender": str}
+        
+    Raises:
+        ValueError: если не удается сгенерировать уникальное имя после 100 попыток
+    """
+    global _used_names
+    
+    fake = Faker("ru_RU")
+    
+    # Если пол не задан, выбираем случайно
+    if gender is None:
+        gender = fake.random.choice(["male", "female"])
+    
+    attempts = 0
+    max_attempts = 100
+    
+    while attempts < max_attempts:
+        try:
+            if gender == "male":
+                first_name = fake.first_name_male()
+                last_name = fake.last_name_male()
+            else:  # female
+                first_name = fake.first_name_female()
+                last_name = fake.last_name_female()
+            
+            # Проверяем что имя содержит только одно слово (без отчества)
+            if " " in first_name or " " in last_name:
+                attempts += 1
+                continue
+                
+            # Создаем уникальный идентификатор
+            full_name = f"{first_name} {last_name}"
+            
+            # Проверяем уникальность в рамках сессии
+            if full_name not in _used_names:
+                _used_names.add(full_name)
+                return {
+                    "first_name": first_name,
+                    "last_name": last_name, 
+                    "gender": gender
+                }
+                
+        except Exception as e:
+            logger.warning(f"Ошибка генерации имени: {e}")
+            
+        attempts += 1
+    
+    # Если не удалось сгенерировать уникальное имя
+    raise ValueError(f"Не удалось сгенерировать уникальное русское имя после {max_attempts} попыток")
+
+def reset_names_session():
+    """Сбрасывает счетчик уникальных имен для новой сессии."""
+    global _used_names
+    _used_names.clear()
 
 class DatabaseRepository:
     """
@@ -90,7 +156,7 @@ class DatabaseRepository:
             return result.scalar_one_or_none()
             
     async def update_simulation_status(self, simulation_id: UUID, status: str, 
-                                     end_time: Optional[str] = None) -> None:
+                                     end_time: Optional[datetime] = None) -> None:
         """Update simulation status."""
         async with self.SessionLocal() as session:
             stmt = update(SimulationRun).where(
@@ -109,7 +175,7 @@ class DatabaseRepository:
             result = await session.execute(
                 select(SimulationRun).where(
                     SimulationRun.status.in_(["RUNNING", "ACTIVE", "STOPPING"])
-                ).order_by(SimulationRun.created_at.desc())
+                ).order_by(SimulationRun.start_time.desc())
             )
             return result.scalars().all()
             
@@ -159,7 +225,7 @@ class DatabaseRepository:
         """
         async with self.SessionLocal() as session:
             # Update simulation end time
-            current_time = datetime.utcnow().isoformat()
+            current_time = datetime.utcnow()
             
             stmt = update(SimulationRun).where(
                 SimulationRun.run_id == simulation_id
@@ -174,7 +240,7 @@ class DatabaseRepository:
             logger.info(json.dumps({
                 "event": "simulation_force_completed",
                 "simulation_id": str(simulation_id),
-                "end_time": current_time
+                "end_time": current_time.isoformat()
             }))
             
     # Person operations  
@@ -184,19 +250,67 @@ class DatabaseRepository:
             session.add(person)
             await session.commit()
             
-    async def bulk_create_persons(self, persons: List[Person]) -> None:
-        """Bulk create persons - appends new persons without overwriting existing ones."""
+    async def bulk_create_persons(self, persons: List["Person"]) -> None:
+        """Create multiple persons efficiently."""
         if not persons:
             return
             
+        from ..db.models import Person as DBPerson
+        
+        # Сбрасываем счетчик уникальных имен для новой сессии
+        reset_names_session()
+        
+        db_persons = []
+        for person in persons:
+            import random
+            
+            current_year = datetime.now().year
+            birth_year = random.randint(current_year - 65, current_year - 18)
+            birth_date = date(birth_year, random.randint(1, 12), random.randint(1, 28))
+            
+            # ИСПРАВЛЕНО: Используем faker для генерации русских имен
+            try:
+                name_data = generate_russian_name()
+                first_name = name_data["first_name"]
+                last_name = name_data["last_name"]
+                gender = name_data["gender"]
+            except ValueError as e:
+                logger.error(f"Ошибка генерации имени: {e}")
+                # Fallback на простые имена если faker не сработал
+                gender = random.choice(["male", "female"])
+                if gender == "male":
+                    first_name, last_name = "Иван", "Иванов"
+                else:
+                    first_name, last_name = "Анна", "Иванова"
+            
+            db_person = DBPerson(
+                id=person.id,
+                simulation_id=person.simulation_id,
+                profession=person.profession,
+                first_name=first_name,
+                last_name=last_name,
+                gender=gender,
+                date_of_birth=birth_date,
+                financial_capability=person.financial_capability,
+                trend_receptivity=person.trend_receptivity,
+                social_status=person.social_status,
+                energy_level=person.energy_level,
+                time_budget=person.time_budget,
+                interests=person.interests,
+                exposure_history={},  # Пустая история в начале
+                created_at=person.created_at
+            )
+            db_persons.append(db_person)
+            
         async with self.SessionLocal() as session:
-            session.add_all(persons)
+            session.add_all(db_persons)
             await session.commit()
             
             logger.info(json.dumps({
                 "event": "bulk_persons_created", 
-                "count": len(persons),
-                "simulation_id": str(persons[0].simulation_id) if persons else None
+                "count": len(db_persons),
+                "simulation_id": str(persons[0].simulation_id) if persons else None,
+                "unique_names_generated": len(_used_names)
             }))
             
     async def get_persons_count(self, simulation_id: UUID = None) -> int:
@@ -208,31 +322,36 @@ class DatabaseRepository:
             result = await session.execute(query)
             return len(result.scalars().all())
             
-    async def get_persons_for_simulation(self, simulation_id: UUID, num_agents: int) -> List[Person]:
-        """
-        Get persons for simulation with smart agent allocation logic:
-        - If fewer agents in DB than requested: return existing + create missing
-        - If more agents in DB than requested: return first N agents by creation order
-        """
+    async def get_persons_for_simulation(self, simulation_id: UUID, limit: int = 1000) -> List["Person"]:
+        """Get persons for a simulation with limit, converting DB models to domain models."""
+        from ..db.models import Person as DBPerson
+        from ..domain.person import Person as DomainPerson
+        
         async with self.ReadOnlySession() as session:
-            # Get existing persons for this simulation  
             result = await session.execute(
-                select(Person)
-                .where(Person.simulation_id == simulation_id)
-                .order_by(Person.created_at)
-                .limit(num_agents)
+                select(DBPerson).where(DBPerson.simulation_id == simulation_id).limit(limit)
             )
-            existing_persons = result.scalars().all()
+            db_persons = result.scalars().all()
             
-            logger.info(json.dumps({
-                "event": "persons_allocation",
-                "simulation_id": str(simulation_id),
-                "existing_count": len(existing_persons),
-                "requested_count": num_agents,
-                "allocation_strategy": "reuse_existing" if len(existing_persons) >= num_agents else "supplement_missing"
-            }))
-            
-            return existing_persons
+            # Конвертируем модели БД в доменные модели
+            domain_persons = []
+            for db_person in db_persons:
+                domain_person = DomainPerson(
+                    id=db_person.id,
+                    profession=db_person.profession,
+                    financial_capability=db_person.financial_capability,
+                    trend_receptivity=db_person.trend_receptivity,
+                    social_status=db_person.social_status,
+                    energy_level=db_person.energy_level,
+                    time_budget=db_person.time_budget,
+                    interests=db_person.interests or {},
+                    exposure_history=db_person.exposure_history or {},
+                    simulation_id=db_person.simulation_id,
+                    created_at=db_person.created_at
+                )
+                domain_persons.append(domain_person)
+                
+            return domain_persons
             
     async def get_persons_by_simulation(self, simulation_id: UUID) -> List[Person]:
         """Get all persons for a simulation."""
@@ -361,6 +480,21 @@ class DatabaseRepository:
                 
             return interests
             
+    async def bulk_update_persons(self, updates: List[Dict[str, Any]]) -> None:
+        """Bulk update persons."""
+        if not updates:
+            return
+            
+        async with self.SessionLocal() as session:
+            stmt = update(Person)
+            await session.execute(stmt, updates)
+            await session.commit()
+            
+            logger.info(json.dumps({
+                "event": "bulk_persons_updated",
+                "count": len(updates)
+            }))
+    
     # Batch operations
     async def batch_commit_states(self, updates: List[Dict[str, Any]]) -> None:
         """
@@ -453,28 +587,63 @@ class DatabaseRepository:
     async def get_simulation_stats(self, simulation_id: UUID) -> Dict[str, Any]:
         """Get simulation statistics."""
         async with self.ReadOnlySession() as session:
-            # Person count
+            # Count persons
             persons_result = await session.execute(
-                select(Person.id).where(Person.simulation_id == simulation_id)
+                select(Person).where(Person.simulation_id == simulation_id)
             )
-            person_count = len(persons_result.scalars().all())
+            persons_count = len(persons_result.scalars().all())
             
-            # Trends count  
+            # Count trends
             trends_result = await session.execute(
-                select(Trend.trend_id).where(Trend.simulation_id == simulation_id)
+                select(Trend).where(Trend.simulation_id == simulation_id)
             )
             trends_count = len(trends_result.scalars().all())
             
-            # Events count
+            # Count events
             events_result = await session.execute(
-                select(Event.event_id).where(Event.simulation_id == simulation_id)
+                select(Event).where(Event.simulation_id == simulation_id)
             )
             events_count = len(events_result.scalars().all())
             
             return {
                 "simulation_id": str(simulation_id),
-                "persons_count": person_count,
+                "persons_count": persons_count,
                 "trends_count": trends_count,
-                "events_count": events_count,
-                "batch_pending": len(self._batch_updates)
-            } 
+                "events_count": events_count
+            }
+
+    async def execute_query(self, query: str, params: tuple = None) -> List[Dict[str, Any]]:
+        """
+        Выполняет произвольный SQL запрос с параметрами.
+        
+        Args:
+            query: SQL запрос с placeholder'ами (%s)
+            params: Кортеж параметров для подстановки
+            
+        Returns:
+            Список словарей с результатами запроса
+        """
+        async with self.ReadOnlySession() as session:
+            try:
+                # Выполняем запрос
+                if params:
+                    result = await session.execute(text(query), params)
+                else:
+                    result = await session.execute(text(query))
+                
+                # Получаем все строки
+                rows = result.fetchall()
+                
+                # Преобразуем в список словарей
+                if rows:
+                    columns = result.keys()
+                    return [dict(zip(columns, row)) for row in rows]
+                else:
+                    return []
+                    
+            except SQLAlchemyError as e:
+                logger.error(f"Ошибка выполнения SQL запроса: {e}")
+                raise
+            except Exception as e:
+                logger.error(f"Неожиданная ошибка при выполнении запроса: {e}")
+                raise 
