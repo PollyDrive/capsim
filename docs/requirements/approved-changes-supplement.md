@@ -163,27 +163,6 @@ capsim-cli agents recreate --count 100 --proper-attributes
 
 ## 5. Configuration Management ✅
 
-### 5.1 Environment Variables
-```env
-# Realtime Clock
-SIM_SPEED_FACTOR=60
-REALTIME_MODE=false
-
-# Database
-DATABASE_URL=postgresql://capsim_rw:password@postgres:5432/capsim_db
-DATABASE_URL_RO=postgresql://capsim_ro:password@postgres:5432/capsim_db
-
-# Performance
-BATCH_SIZE=100
-DECIDE_SCORE_THRESHOLD=0.25
-TREND_ARCHIVE_THRESHOLD_DAYS=3
-
-# Monitoring
-ENABLE_METRICS=true
-LOG_LEVEL=INFO
-ENABLE_JSON_LOGS=true
-```
-
 ### 5.2 Configuration File Structure
 ```yaml
 # config/default.yml

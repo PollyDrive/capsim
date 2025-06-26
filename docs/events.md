@@ -61,7 +61,7 @@ next_response = current_time + random.expovariate(1.0/15.0)  # λ=15 минут
 
 ### 5. Ограничения времени
 - **Минимальная задержка**: 1.0 минута (для предотвращения одновременных событий)
-- **Максимальная очередь**: 5000 событий (graceful degradation)
+- **Максимальная очередь**: 1000 событий (graceful degradation)
 - **Временной бюджет**: агенты ограничены 43 действиями в день
 
 ## Detailed Event Specifications
@@ -131,6 +131,6 @@ next_response = current_time + random.expovariate(1.0/15.0)  # λ=15 минут
 ## Performance Targets
 
 - **P95 latency**: < 10ms для обработки одного события
-- **Throughput**: поддержка 1000 агентов × 43 события/день = 43000 событий/день
+- **Throughput**: поддержка 1000 агентов × 43 события/день = до 43000 событий/день
 - **Queue overflow**: graceful degradation при превышении 5000 событий
 - **Batch commit**: автоматический commit каждую минуту симулированного времени 

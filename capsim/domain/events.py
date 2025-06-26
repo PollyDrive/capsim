@@ -54,10 +54,11 @@ class BaseEvent(ABC):
 class PublishPostAction(BaseEvent):
     """Событие публикации поста агентом."""
     
-    def __init__(self, agent_id: UUID, topic: str, timestamp: float):
+    def __init__(self, agent_id: UUID, topic: str, timestamp: float, trigger_trend_id: Optional[UUID] = None):
         super().__init__(EventPriority.AGENT_ACTION, timestamp)
         self.agent_id = agent_id
         self.topic = topic
+        self.trigger_trend_id = trigger_trend_id
         
     def process(self, engine: "SimulationEngine") -> None:
         """
@@ -97,19 +98,16 @@ class PublishPostAction(BaseEvent):
         # Создать новый тренд
         from ..domain.trend import Trend, CoverageLevel
         
-        # Базовая виральность зависит от социального статуса агента
-        base_virality = min(5.0, agent.social_status + (agent.trend_receptivity * 0.2))
-        
-        # ИСПРАВЛЕНИЕ: Увеличиваем базовую виральность для более высоких значений
-        # Добавляем бонус за профессиональную экспертизу
+        # ИСПРАВЛЕНИЕ: Более реалистичная базовая виральность
+        # Базовая виральность зависит от социального статуса агента и его экспертизы в теме
         topic_affinity = agent.get_affinity_for_topic(self.topic)
-        expertise_bonus = (topic_affinity / 5.0) * 1.5  # Бонус до 1.5
+        expertise_bonus = (topic_affinity / 5.0) * 0.5  # Бонус до 0.5
         
-        base_virality = min(5.0, 
-            agent.social_status * 1.2 +  # Увеличенный вес соц. статуса
-            (agent.trend_receptivity * 0.5) +  # Увеличенный вес восприимчивости
-            expertise_bonus +  # Бонус за экспертизу
-            1.0  # Базовый минимум
+        base_virality = min(3.0,  # Максимум 3.0 для базовой виральности
+            (agent.social_status * 0.4) +  # Социальный статус влияет на виральность
+            (agent.trend_receptivity * 0.3) +  # Восприимчивость к трендам
+            expertise_bonus +  # Бонус за экспертизу в теме
+            0.5  # Базовый минимум
         )
         
         # Уровень охвата зависит от финансовых возможностей
@@ -123,14 +121,24 @@ class PublishPostAction(BaseEvent):
         # ИСПРАВЛЕНИЕ: Проверяем является ли это ответом на существующий тренд
         parent_trend_id = None
         
-        # Ищем последний активный тренд той же темы (возможный parent)
-        for trend in engine.active_trends.values():
-            if (trend.topic == self.topic and 
-                trend.originator_id != agent.id and
-                trend.total_interactions > 0):
-                parent_trend_id = trend.trend_id
-                break  # Берем первый найденный активный тренд как родительский
+        # Проверяем есть ли trigger_trend_id (это ответный пост)
+        if hasattr(self, 'trigger_trend_id') and self.trigger_trend_id:
+            parent_trend_id = self.trigger_trend_id
+        else:
+            # Ищем последний активный тренд той же темы (возможный parent)
+            # Только если это НЕ seed пост (т.е. есть активные тренды с interactions > 0)
+            active_trends_same_topic = [
+                trend for trend in engine.active_trends.values()
+                if (trend.topic == self.topic and 
+                    trend.originator_id != agent.id and
+                    trend.total_interactions > 0)
+            ]
             
+            if active_trends_same_topic:
+                # Это ответный пост - берем самый активный тренд как родительский
+                parent_trend = max(active_trends_same_topic, key=lambda t: t.total_interactions)
+                parent_trend_id = parent_trend.trend_id
+        
         new_trend = Trend.create_from_action(
             topic=self.topic,
             originator_id=self.agent_id,
@@ -157,12 +165,12 @@ class PublishPostAction(BaseEvent):
         
         # Обновить состояние агента
         agent.update_state({
-            "energy_level": -1.0,  # Тратим энергию
+            "energy_level": -0.1,  # ИСПРАВЛЕНИЕ: снижаем трату энергии до 0.1
             "time_budget": -1,     # Тратим время
             "social_status": 0.1   # Небольшой прирост статуса от публикации
         })
         
-        # Добавить в batch обновления
+        # Добавить в batch обновления (только состояние, без истории)
         engine.add_to_batch_update({
             "type": "person_state",
             "id": self.agent_id,
@@ -478,7 +486,7 @@ class TrendInfluenceEvent(BaseEvent):
             import random
             if random.random() < influence_probability:
                 # Рассчитываем силу влияния
-                influence_strength = min(0.5, current_virality * 0.1)
+                influence_strength = min(0.5, current_virality * 0.2)  # ИСПРАВЛЕНИЕ: Увеличиваем силу влияния
                 
                 # Создаем пакет updatestate для агента
                 update_state = {
@@ -486,7 +494,7 @@ class TrendInfluenceEvent(BaseEvent):
                     "attribute_changes": {
                         "trend_receptivity": influence_strength * 0.2,
                         "social_status": influence_strength * 0.1,
-                        "energy_level": -0.1  # Небольшая усталость от просмотра
+                        "energy_level": -0.05  # ИСПРАВЛЕНИЕ: уменьшаем усталость от просмотра
                     },
                     "reason": "TrendInfluence",
                     "source_trend_id": trend.trend_id,
@@ -508,33 +516,29 @@ class TrendInfluenceEvent(BaseEvent):
                 response_probability = (
                     influence_strength * 
                     agent.social_status / 5.0 * 
-                    0.3  # Базовая вероятность ответа
+                    0.6  # ИСПРАВЛЕНИЕ: Увеличиваем базовую вероятность ответа
                 )
                 
                 if (random.random() < response_probability and 
-                    agent.energy_level >= 1.0 and 
+                    agent.energy_level >= 0.5 and  # ИСПРАВЛЕНИЕ: Снижаем требования к энергии для ответных постов
                     engine._can_agent_act_today(agent.id)):
                     
-                    # Создаем контекст для выбора темы
-                    from ..engine.simulation_engine import SimulationContext
-                    context = SimulationContext(
-                        current_time=self.timestamp,
-                        active_trends=engine.active_trends,
-                        affinity_map=engine.affinity_map
-                    )
+                    # ИСПРАВЛЕНИЕ: Создаем ответный пост на ту же тему что и родительский тренд
+                    response_topic = trend.topic  # Используем тему родительского тренда
                     
-                    response_topic = agent._select_best_topic(context)
-                    if response_topic:
-                        # Создаем будущее действие
-                        response_delay = random.uniform(10.0, 60.0)
-                        new_action = {
-                            "agent_id": agent.id,
-                            "action_type": "PublishPostAction",
-                            "topic": response_topic,
-                            "timestamp": self.timestamp + response_delay,
-                            "trigger_trend_id": trend.trend_id
-                        }
-                        new_actions_batch.append(new_action)
+                    # Создаем будущее действие с parent_trend_id
+                    response_delay = random.uniform(10.0, 60.0)
+                    new_action = {
+                        "agent_id": agent.id,
+                        "action_type": "PublishPostAction",
+                        "topic": response_topic,
+                        "timestamp": self.timestamp + response_delay,
+                        "trigger_trend_id": trend.trend_id  # Указываем что это ответ на тренд
+                    }
+                    new_actions_batch.append(new_action)
+                    
+                    # ИСПРАВЛЕНИЕ: Увеличиваем total_interactions у родительского тренда
+                    trend.add_interaction()
         
         # Пакетная обработка updatestate
         if update_state_batch:
