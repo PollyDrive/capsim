@@ -2,7 +2,7 @@
 Database models for CAPSIM 2.0 using SQLAlchemy 2.0.
 """
 
-from sqlalchemy import Column, Integer, String, Float, DateTime, Date, Text, ForeignKey, BOOLEAN, JSON, MetaData
+from sqlalchemy import Column, Integer, String, Float, DateTime, Date, Text, ForeignKey, BOOLEAN, JSON, MetaData, Numeric
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
@@ -51,7 +51,7 @@ class Person(Base):
     energy_level = Column(Float, default=5.0)
     
     # Time and interaction tracking
-    time_budget = Column(Float, default=2.5)  # 0.0-5.0 float scale
+    time_budget = Column(Numeric(2, 1), default=2.5)  # 0.0-5.0 with 0.5 step
     exposure_history = Column(JSON, default=dict)  # {trend_id: timestamp}
     interests = Column(JSON, default=dict)  # {interest_name: value}
     

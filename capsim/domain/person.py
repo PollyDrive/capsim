@@ -38,10 +38,10 @@ class Person:
     financial_capability: float = 0.0
     trend_receptivity: float = 0.0
     social_status: float = 0.0
-    energy_level: float = 0.0  # ИСПРАВЛЕНО: убрал дефолт 5.0
+    energy_level: float = 5.0  # Унифицировано с DB: дефолт 5.0
     
     # Time and interaction tracking
-    time_budget: float = 0.0  # ИСПРАВЛЕНО: убрал дефолт 2.5
+    time_budget: float = 2.5  # Унифицировано с DB: дефолт 2.5, NUMERIC(2,1)
     exposure_history: Dict[str, datetime] = field(default_factory=dict)
     interests: Dict[str, float] = field(default_factory=dict)
     
@@ -120,7 +120,9 @@ class Person:
                                "trend_receptivity", "social_status"]:
                     new_value = max(0.0, min(5.0, current_value + delta))
                 elif attribute == "time_budget":
-                    new_value = max(0, min(5, int(current_value + delta)))
+                    # Унифицировано: float с округлением до 0.5
+                    raw_value = max(0.0, min(5.0, float(current_value + delta)))
+                    new_value = float(round(raw_value * 2) / 2)  # Округление до 0.5, принудительно float
                 else:
                     new_value = current_value + delta
                     
@@ -371,6 +373,6 @@ class Person:
             social_status=round(random.uniform(*ranges["social_status"]), 3),
             trend_receptivity=round(random.uniform(*ranges["trend_receptivity"]), 3),
             energy_level=round(random.uniform(*ranges["energy_level"]), 3),
-            time_budget=int(random.uniform(*ranges["time_budget"])),
+            time_budget=float(round(random.uniform(*ranges["time_budget"]) * 2) / 2),  # Округление до 0.5, принудительно float
             interests=base_interests
         ) 

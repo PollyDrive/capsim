@@ -300,7 +300,9 @@ class DailyResetEvent(BaseEvent):
         for agent in engine.agents:
             budget_range = profession_budgets.get(agent.profession, (1, 3))
             old_budget = agent.time_budget
-            agent.time_budget = random.randint(*budget_range)
+            # Унифицировано: float с округлением до 0.5
+            raw_budget = random.uniform(*budget_range)
+            agent.time_budget = float(round(raw_budget * 2) / 2)
             
             if agent.time_budget != old_budget:
                 reset_count += 1
