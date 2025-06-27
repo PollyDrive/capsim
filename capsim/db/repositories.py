@@ -156,7 +156,8 @@ class DatabaseRepository:
             return result.scalar_one_or_none()
             
     async def update_simulation_status(self, simulation_id: UUID, status: str, 
-                                     end_time: Optional[datetime] = None) -> None:
+                                     end_time: Optional[datetime] = None, 
+                                     reason: Optional[str] = None) -> None:
         """Update simulation status."""
         async with self.SessionLocal() as session:
             stmt = update(SimulationRun).where(
@@ -169,12 +170,29 @@ class DatabaseRepository:
             await session.execute(stmt)
             await session.commit()
             
+            logger.info(json.dumps({
+                "event": "simulation_status_updated",
+                "simulation_id": str(simulation_id),
+                "status": status,
+                "reason": reason
+            }))
+            
     async def get_active_simulations(self) -> List[SimulationRun]:
         """Get all active (running) simulations."""
         async with self.ReadOnlySession() as session:
             result = await session.execute(
                 select(SimulationRun).where(
                     SimulationRun.status.in_(["RUNNING", "ACTIVE", "STOPPING"])
+                ).order_by(SimulationRun.start_time.desc())
+            )
+            return result.scalars().all()
+            
+    async def get_simulations_by_status(self, status: str) -> List[SimulationRun]:
+        """Get simulations by specific status."""
+        async with self.ReadOnlySession() as session:
+            result = await session.execute(
+                select(SimulationRun).where(
+                    SimulationRun.status == status
                 ).order_by(SimulationRun.start_time.desc())
             )
             return result.scalars().all()

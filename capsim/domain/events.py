@@ -113,16 +113,16 @@ class PublishPostAction(BaseEvent):
         # Уровень охвата зависит от финансовых возможностей
         if agent.financial_capability >= 4.0:
             coverage = CoverageLevel.HIGH.value
-        elif agent.financial_capability >= 2.5:
-            coverage = CoverageLevel.MIDDLE.value
-        else:
+        elif agent.social_status < 1.5:  # ИСПРАВЛЕНИЕ: Low только при низком социальном статусе
             coverage = CoverageLevel.LOW.value
+        else:
+            coverage = CoverageLevel.MIDDLE.value  # ИСПРАВЛЕНИЕ: Middle по умолчанию
             
         # ИСПРАВЛЕНИЕ: Проверяем является ли это ответом на существующий тренд
         parent_trend_id = None
         
         # Проверяем есть ли trigger_trend_id (это ответный пост)
-        if hasattr(self, 'trigger_trend_id') and self.trigger_trend_id:
+        if self.trigger_trend_id:  # ИСПРАВЛЕНИЕ: убираем hasattr, проверяем значение
             parent_trend_id = self.trigger_trend_id
         else:
             # Ищем последний активный тренд той же темы (возможный parent)
@@ -165,8 +165,8 @@ class PublishPostAction(BaseEvent):
         
         # Обновить состояние агента
         agent.update_state({
-            "energy_level": -0.1,  # ИСПРАВЛЕНИЕ: снижаем трату энергии до 0.1
-            "time_budget": -1,     # Тратим время
+            "energy_level": -0.1,  # ИСПРАВЛЕНИЕ: увеличиваем трату энергии до 0.1
+            "time_budget": -0.1,     # Тратим время
             "social_status": 0.1   # Небольшой прирост статуса от публикации
         })
         
@@ -494,7 +494,7 @@ class TrendInfluenceEvent(BaseEvent):
                     "attribute_changes": {
                         "trend_receptivity": influence_strength * 0.2,
                         "social_status": influence_strength * 0.1,
-                        "energy_level": -0.05  # ИСПРАВЛЕНИЕ: уменьшаем усталость от просмотра
+                        "energy_level": -0.01  # ИСПРАВЛЕНИЕ: снижаем усталость от просмотра до 0.01
                     },
                     "reason": "TrendInfluence",
                     "source_trend_id": trend.trend_id,
@@ -508,6 +508,14 @@ class TrendInfluenceEvent(BaseEvent):
                 # Добавляем взаимодействие с трендом
                 trend.add_interaction()
                 influenced_agents += 1
+                
+                # ИСПРАВЛЕНИЕ: Добавляем обновление тренда в batch
+                engine.add_to_batch_update({
+                    "type": "trend_interaction",
+                    "trend_id": trend.trend_id,
+                    "total_interactions": trend.total_interactions,
+                    "timestamp": self.timestamp
+                })
                 
                 # Записываем в историю воздействий
                 agent.exposure_history[str(trend.trend_id)] = self.timestamp

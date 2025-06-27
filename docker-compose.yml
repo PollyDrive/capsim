@@ -110,6 +110,18 @@ services:
     depends_on:
       - loki
 
+  prometheus:
+    image: prom/prometheus:v2.40.0
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml
+    depends_on:
+      - app
+    networks:
+      - default
+
 volumes:
   postgres_data:
   grafana_data:

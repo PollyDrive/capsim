@@ -109,18 +109,20 @@ class SimulationEngine:
         self._agent_action_cooldowns = {}
         self._daily_action_count = {}
         
-        # Создать запуск симуляции
+        # ИСПРАВЛЕНИЕ: Принудительно завершаем старые симуляции со статусом RUNNING
+        await self._cleanup_stale_simulations()
+        
+        # Создать запись о симуляции
         simulation_run = await self.db_repo.create_simulation_run(
             num_agents=num_agents,
-            duration_days=1,  # По умолчанию 1 день
+            duration_days=1,  # Базовое значение, будет обновлено при запуске
             configuration={
-                "batch_size": self.batch_size,
-                "batch_timeout": self.batch_timeout_minutes,
-                "trend_archive_days": self.trend_archive_threshold_days,
-                "sim_speed_factor": settings.SIM_SPEED_FACTOR
+                "realtime_mode": settings.ENABLE_REALTIME,
+                "speed_factor": settings.SIM_SPEED_FACTOR,
+                "batch_size": settings.BATCH_SIZE
             }
         )
-        self.simulation_id = simulation_run.run_id
+        self.simulation_id = simulation_run.run_id  # ИСПРАВЛЕНИЕ: извлекаем ID из объекта
         
         # ИСПРАВЛЕНИЕ: Обновляем статус на RUNNING при инициализации
         await self.db_repo.update_simulation_status(
@@ -195,18 +197,18 @@ class SimulationEngine:
                 else:
                     # СТРОГОЕ РАСПРЕДЕЛЕНИЕ ПРОФЕССИЙ согласно ТЗ (таблица распределения)
                     profession_distribution_tz = [
-                        ("Teacher", 0.20),        # 20%
+                        ("Teacher", 0.08),        # 8%
                         ("ShopClerk", 0.18),      # 18%
-                        ("Developer", 0.12),      # 12%
+                        ("Developer", 0.08),      # 8%
                         ("Unemployed", 0.09),     # 9%
-                        ("Businessman", 0.08),    # 8%
+                        ("Businessman", 0.11),    # 11%
                         ("Artist", 0.08),         # 8%
-                        ("Worker", 0.07),         # 7%
-                        ("Blogger", 0.05),        # 5%
-                        ("SpiritualMentor", 0.03), # 3%
-                        ("Philosopher", 0.02),    # 2%
+                        ("Worker", 0.15),         # 15%
+                        ("Blogger", 0.10),        # 10%
+                        ("SpiritualMentor", 0.05), # 5%
+                        ("Philosopher", 0.03),    # 3%
                         ("Politician", 0.01),     # 1%
-                        ("Doctor", 0.01),         # 1%
+                        ("Doctor", 0.04),         # 4%
                     ]
                     
                     # Вычисляем точное количество агентов по профессиям
@@ -486,10 +488,10 @@ class SimulationEngine:
         # Селективный отбор подходящих агентов для seed событий
         suitable_agents = []
         for agent in self.agents:
-            if (agent.energy_level >= 1.5 and 
-                agent.time_budget >= 2 and
-                agent.social_status >= 2.0 and
-                agent.trend_receptivity >= 2.0):
+            if (agent.energy_level >= 0.5 and  # ИСПРАВЛЕНИЕ: снижаем с 1.5 до 0.5
+                agent.time_budget >= 1 and     # ИСПРАВЛЕНИЕ: снижаем с 2 до 1
+                agent.social_status >= 1.0 and # ИСПРАВЛЕНИЕ: снижаем с 2.0 до 1.0
+                agent.trend_receptivity >= 0.5): # ИСПРАВЛЕНИЕ: снижаем с 2.0 до 0.5
                 suitable_agents.append(agent)
         
         # Ограничиваем количество seed событий (10-20% от подходящих агентов)
@@ -1031,3 +1033,34 @@ class SimulationEngine:
             "final_time": self.current_time,
             "data_preserved": method == "graceful"
         }, default=str)) 
+
+    async def _cleanup_stale_simulations(self) -> None:
+        """
+        Принудительно завершает старые симуляции со статусом RUNNING.
+        Это предотвращает висящие записи в базе данных.
+        """
+        try:
+            # Найти все симуляции со статусом RUNNING
+            stale_simulations = await self.db_repo.get_simulations_by_status("RUNNING")
+            
+            for simulation in stale_simulations:
+                logger.warning(json.dumps({
+                    "event": "cleaning_stale_simulation",
+                    "simulation_id": str(simulation.run_id),
+                    "start_time": str(simulation.start_time),
+                    "status": simulation.status
+                }, default=str))
+                
+                # Обновить статус на FAILED с комментарием
+                await self.db_repo.update_simulation_status(
+                    simulation.run_id,
+                    "FAILED",
+                    datetime.utcnow(),
+                    reason="Stale simulation cleanup"
+                )
+                
+        except Exception as e:
+            logger.error(json.dumps({
+                "event": "cleanup_stale_simulations_error",
+                "error": str(e)
+            }, default=str)) 

@@ -29,7 +29,11 @@ RUN pip install --no-cache-dir poetry \
         alembic \
         prometheus-client \
         pydantic \
-        python-multipart
+        python-multipart \
+        faker \
+        structlog \
+        psutil \
+        python-dotenv
 
 # Copy application code
 COPY . .
