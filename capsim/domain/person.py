@@ -162,18 +162,13 @@ class Person:
         Returns:
             Уровень интереса (0.0-5.0)
         """
-        # Маппинг тем к категориям интересов
-        topic_mapping = {
-            "ECONOMIC": "Economics",
-            "HEALTH": "Wellbeing", 
-            "SPIRITUAL": "Religion",
-            "CONSPIRACY": "Politics",
-            "SCIENCE": "Education",
-            "CULTURE": "Entertainment",
-            "SPORT": "Entertainment"
-        }
+        # Используем централизованный маппинг
+        from capsim.common.topic_mapping import topic_to_interest_category
         
-        interest_category = topic_mapping.get(topic, "Economics")
+        try:
+            interest_category = topic_to_interest_category(topic)
+        except KeyError:
+            interest_category = "Economics"  # Fallback
         return self.interests.get(interest_category, 2.5)  # Дефолт средний интерес
         
     def get_affinity_for_topic(self, topic: str) -> float:

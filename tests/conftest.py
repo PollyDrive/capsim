@@ -39,6 +39,7 @@ try:
         BaseEvent, EventPriority
     )
     from capsim.engine.simulation_engine import SimulationEngine, SimulationContext
+    from capsim.common.topic_mapping import get_all_topic_codes
     CAPSIM_AVAILABLE = True
 except ImportError:
     CAPSIM_AVAILABLE = False
@@ -372,7 +373,8 @@ def assert_trend_valid(trend):
     assert trend.trend_id is not None
     assert trend.simulation_id is not None
     assert trend.originator_id is not None
-    assert trend.topic in ["ECONOMIC", "HEALTH", "SPIRITUAL", "CONSPIRACY", "SCIENCE", "CULTURE", "SPORT"]
+    # Validate topic is canonical
+    assert trend.topic in get_all_topic_codes()
     assert 0.0 <= trend.base_virality_score <= 5.0
     assert trend.coverage_level in ["Low", "Middle", "High"]
     assert trend.total_interactions >= 0

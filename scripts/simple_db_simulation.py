@@ -426,7 +426,8 @@ def run_basic_simulation(simulation_id: str):
         events_processed = 0
         trends_created = 0
         
-        topics = ["Economic", "Health", "Spiritual", "Conspiracy", "Science", "Culture", "Sport"]
+        from capsim.common.topic_mapping import get_display_mapping
+        topics = list(get_display_mapping().values())
         
         # Run simulation loop
         start_real_time = time.time()

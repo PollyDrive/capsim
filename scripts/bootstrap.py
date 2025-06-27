@@ -16,8 +16,10 @@ import sys
 import asyncio
 import json
 import uuid
+import logging
+import random
 from typing import Dict, List, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Add project root to Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -36,6 +38,10 @@ from capsim.db.models import (
 )
 from capsim.db.repositories import DatabaseRepository
 
+# Используем централизованный маппинг топиков
+from capsim.common.topic_mapping import get_display_mapping
+
+TOPICS = list(get_display_mapping().values())
 
 class CapsimBootstrap:
     """Senior Database Developer bootstrap implementation."""
@@ -50,8 +56,6 @@ class CapsimBootstrap:
         "Economics", "Wellbeing", "Security", "Entertainment", 
         "Education", "Technology", "SocialIssues"
     ]
-    
-    TOPICS = ["Economic", "Health", "Spiritual", "Conspiracy", "Science", "Culture", "Sport"]
     
     def __init__(self):
         """Инициализация с настройками БД."""

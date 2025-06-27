@@ -26,6 +26,9 @@ from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 from faker import Faker
 from sqlalchemy import create_engine, text
 
+# Используем централизованный маппинг топиков
+from capsim.common.topic_mapping import get_display_mapping
+
 
 class CapsimSeniorBootstrap:
     """Senior Database Developer bootstrap implementation."""
@@ -41,7 +44,8 @@ class CapsimSeniorBootstrap:
         "Education", "Technology", "SocialIssues"
     ]
     
-    TOPICS = ["Economic", "Health", "Spiritual", "Conspiracy", "Science", "Culture", "Sport"]
+    # Используем централизованный маппинг топиков
+    TOPICS = list(get_display_mapping().values())
     
     def __init__(self):
         """Инициализация с настройками БД."""

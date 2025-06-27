@@ -201,4 +201,20 @@ class DailyTrendSummary(Base):
     # Уникальный индекс на (simulation_id, simulation_day, topic)
     __table_args__ = (
         {'sqlite_autoincrement': True},
+    )
+
+
+class TopicInterestMapping(Base):
+    """Централизованная таблица маппинга топиков трендов к категориям интересов."""
+    __tablename__ = "topic_interest_mapping"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    topic_code = Column(String(20), nullable=False, unique=True)  # ECONOMIC, HEALTH, etc.
+    topic_display = Column(String(50), nullable=False)  # Economic, Health, etc.
+    interest_category = Column(String(50), nullable=False)  # Economics, Wellbeing, etc.
+    description = Column(Text, nullable=True)
+    
+    # Уникальный индекс на topic_code
+    __table_args__ = (
+        {'sqlite_autoincrement': True},
     ) 

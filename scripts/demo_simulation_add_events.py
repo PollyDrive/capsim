@@ -49,7 +49,8 @@ def generate_demo_events():
         # 3. Добавляем seed события с распределением по времени
         current_time = 0.0  # Время в минутах симуляции
         events_added = 0
-        topics = ["ECONOMIC", "HEALTH", "SPIRITUAL", "SCIENCE", "CULTURE", "SPORT"]
+        from capsim.common.topic_mapping import get_all_topic_codes
+        topics = get_all_topic_codes()
         
         print("\n🌱 ДОБАВЛЕНИЕ SEED СОБЫТИЙ:")
         print("(распределенных по симуляционному времени)")

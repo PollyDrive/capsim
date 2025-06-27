@@ -234,7 +234,9 @@ def run_production_simulation(simulation_id: str):
         trends_created = 0
         start_real_time = time.time()
         
-        topics = ["Economic", "Health", "Spiritual", "Conspiracy", "Science", "Culture", "Sport"]
+        # Используем централизованный маппинг топиков
+        from capsim.common.topic_mapping import get_display_mapping
+        topics = list(get_display_mapping().values())
         event_types = ["agent_action", "social_interaction", "trend_influence", "trend_created", "energy_recovery"]
         
         # Создаем начальные тренды
