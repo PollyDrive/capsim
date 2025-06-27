@@ -451,7 +451,9 @@ class TestAPIContractValidation:
             # Additional validations
             assert trend["total_interactions"] >= 0
             assert 0.0 <= trend["virality_score"] <= 5.0
-            assert trend["topic"] in ["ECONOMIC", "HEALTH", "SPIRITUAL", "CONSPIRACY", "SCIENCE", "CULTURE", "SPORT"]
+            # Validate topic is one of the canonical topics
+            from capsim.common.topic_mapping import get_all_topic_codes
+            assert trend["topic"] in get_all_topic_codes()
             
         print("All JSON schemas validated successfully")
         

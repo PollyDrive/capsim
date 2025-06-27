@@ -109,7 +109,10 @@ PROFESSION_RANGES = {
 }
 
 VALID_PROFESSIONS = list(PROFESSION_RANGES.keys())
-VALID_TOPICS = ["Economic", "Health", "Spiritual", "Conspiracy", "Science", "Culture", "Sport"]
+
+# Используем централизованный маппинг топиков
+from capsim.common.topic_mapping import get_display_mapping
+VALID_TOPICS = list(get_display_mapping().values())
 
 # Русские имена для валидации
 RUSSIAN_MALE_NAMES = ["Александр", "Дмитрий", "Максим", "Сергей", "Андрей", "Алексей", "Артем", "Илья", "Кирилл", "Михаил"]

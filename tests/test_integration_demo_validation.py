@@ -314,7 +314,8 @@ class TestDemoResultsValidation:
         agents, _ = configured_agents
         
         # All possible topics should map to interest categories
-        all_topics = ["ECONOMIC", "HEALTH", "SPIRITUAL", "CONSPIRACY", "SCIENCE", "CULTURE", "SPORT"]
+        from capsim.common.topic_mapping import get_all_topic_codes
+        all_topics = get_all_topic_codes()
         
         for agent in agents:
             for topic in all_topics:
@@ -322,16 +323,9 @@ class TestDemoResultsValidation:
                 assert 0.0 <= interest_score <= 5.0, \
                     f"Invalid interest score {interest_score} for topic {topic}"
                     
-        # Verify topic mapping consistency согласно ТЗ интересам
-        topic_mapping = {
-            "ECONOMIC": "Economics",
-            "HEALTH": "Wellbeing", 
-            "SPIRITUAL": "Spirituality",  # Изменено с Religion на Spirituality
-            "CONSPIRACY": "Society",      # Изменено с Politics на Society
-            "SCIENCE": "Knowledge",       # Изменено с Education на Knowledge
-            "CULTURE": "Creativity",      # Изменено с Entertainment на Creativity
-            "SPORT": "Society"           # Остается Society
-        }
+        # Используем централизованный маппинг
+        from capsim.common.topic_mapping import get_topic_mapping
+        topic_mapping = get_topic_mapping()
         
         sample_agent = agents[0]
         for topic, expected_interest in topic_mapping.items():

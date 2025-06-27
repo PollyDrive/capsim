@@ -38,10 +38,10 @@ class Person:
     financial_capability: float = 0.0
     trend_receptivity: float = 0.0
     social_status: float = 0.0
-    energy_level: float = 0.0  # ИСПРАВЛЕНО: убрал дефолт 5.0
+    energy_level: float = 5.0  # Унифицировано с DB: дефолт 5.0
     
     # Time and interaction tracking
-    time_budget: float = 0.0  # ИСПРАВЛЕНО: убрал дефолт 2.5
+    time_budget: float = 2.5  # Унифицировано с DB: дефолт 2.5, NUMERIC(2,1)
     exposure_history: Dict[str, datetime] = field(default_factory=dict)
     interests: Dict[str, float] = field(default_factory=dict)
     
@@ -66,7 +66,7 @@ class Person:
             return None
             
         # Получаем threshold из ENV
-        threshold = float(os.getenv("DECIDE_SCORE_THRESHOLD", "0.25"))
+        threshold = float(os.getenv("DECIDE_SCORE_THRESHOLD", "0.4"))
         
         # Проверяем доступные действия и их приоритеты
         possible_actions = ["PublishPostAction"]
@@ -120,7 +120,9 @@ class Person:
                                "trend_receptivity", "social_status"]:
                     new_value = max(0.0, min(5.0, current_value + delta))
                 elif attribute == "time_budget":
-                    new_value = max(0, min(5, int(current_value + delta)))
+                    # Унифицировано: float с округлением до 0.5
+                    raw_value = max(0.0, min(5.0, float(current_value + delta)))
+                    new_value = float(round(raw_value * 2) / 2)  # Округление до 0.5, принудительно float
                 else:
                     new_value = current_value + delta
                     
@@ -143,7 +145,7 @@ class Person:
         # Проверки для конкретных действий
         if action_type == "PublishPostAction":
             return (
-                self.energy_level >= 1.0 and 
+                self.energy_level >= 0.5 and
                 self.time_budget >= 1 and
                 self.trend_receptivity > 0
             )
@@ -160,18 +162,13 @@ class Person:
         Returns:
             Уровень интереса (0.0-5.0)
         """
-        # Маппинг тем к категориям интересов
-        topic_mapping = {
-            "ECONOMIC": "Economics",
-            "HEALTH": "Wellbeing", 
-            "SPIRITUAL": "Religion",
-            "CONSPIRACY": "Politics",
-            "SCIENCE": "Education",
-            "CULTURE": "Entertainment",
-            "SPORT": "Entertainment"
-        }
+        # Используем централизованный маппинг
+        from capsim.common.topic_mapping import topic_to_interest_category
         
-        interest_category = topic_mapping.get(topic, "Economics")
+        try:
+            interest_category = topic_to_interest_category(topic)
+        except KeyError:
+            interest_category = "Economics"  # Fallback
         return self.interests.get(interest_category, 2.5)  # Дефолт средний интерес
         
     def get_affinity_for_topic(self, topic: str) -> float:
@@ -246,52 +243,52 @@ class Person:
         # СТРОГИЕ ДИАПАЗОНЫ АТРИБУТОВ ПО ПРОФЕССИЯМ из ТЗ (таблица 2.4)
         profession_ranges = {
             "ShopClerk": {
-                "financial_capability": (2, 4), "trend_receptivity": (1, 3), 
+                "financial_capability": (2, 4), "trend_receptivity": (0.5, 1.5),
                 "social_status": (1, 3), "energy_level": (2, 5), "time_budget": (3, 5)
             },
             "Worker": {
-                "financial_capability": (2, 4), "trend_receptivity": (1, 3),
+                "financial_capability": (2, 4), "trend_receptivity": (0.5, 1.5),
                 "social_status": (1, 2), "energy_level": (2, 5), "time_budget": (3, 5)
             },
             "Developer": {
-                "financial_capability": (3, 5), "trend_receptivity": (3, 5),
+                "financial_capability": (3, 5), "trend_receptivity": (1.5, 2.5),
                 "social_status": (2, 4), "energy_level": (2, 5), "time_budget": (2, 4)
             },
             "Politician": {
-                "financial_capability": (3, 5), "trend_receptivity": (3, 5),
-                "social_status": (4, 5), "energy_level": (2, 4), "time_budget": (2, 4)
+                "financial_capability": (3, 5), "trend_receptivity": (1.5, 2.5),
+                "social_status": (4, 5), "energy_level": (2, 5), "time_budget": (2, 4)
             },
             "Blogger": {
-                "financial_capability": (2, 4), "trend_receptivity": (4, 5),
+                "financial_capability": (2, 4), "trend_receptivity": (2.0, 3.0),
                 "social_status": (3, 5), "energy_level": (2, 5), "time_budget": (3, 5)
             },
             "Businessman": {
-                "financial_capability": (4, 5), "trend_receptivity": (2, 4),
+                "financial_capability": (4, 5), "trend_receptivity": (1.0, 2.0),
                 "social_status": (4, 5), "energy_level": (2, 5), "time_budget": (2, 4)
             },
             "SpiritualMentor": {
-                "financial_capability": (1, 3), "trend_receptivity": (2, 5),
+                "financial_capability": (1, 3), "trend_receptivity": (1.0, 2.5),
                 "social_status": (2, 4), "energy_level": (3, 5), "time_budget": (2, 4)
             },
             "Philosopher": {
-                "financial_capability": (1, 3), "trend_receptivity": (1, 3),
-                "social_status": (1, 3), "energy_level": (2, 4), "time_budget": (2, 4)
+                "financial_capability": (1, 3), "trend_receptivity": (0.5, 1.5),
+                "social_status": (1, 3), "energy_level": (2, 5), "time_budget": (2, 4)
             },
             "Unemployed": {
-                "financial_capability": (1, 2), "trend_receptivity": (3, 5),
+                "financial_capability": (1, 2), "trend_receptivity": (1.5, 2.5),
                 "social_status": (1, 2), "energy_level": (3, 5), "time_budget": (3, 5)
             },
             "Teacher": {
-                "financial_capability": (1, 3), "trend_receptivity": (1, 3),
-                "social_status": (2, 4), "energy_level": (1, 3), "time_budget": (2, 4)
+                "financial_capability": (1, 3), "trend_receptivity": (0.5, 1.5),
+                "social_status": (2, 4), "energy_level": (2, 5), "time_budget": (2, 4)
             },
             "Artist": {
-                "financial_capability": (1, 3), "trend_receptivity": (2, 4),
+                "financial_capability": (1, 3), "trend_receptivity": (1.0, 2.0),
                 "social_status": (2, 4), "energy_level": (4, 5), "time_budget": (3, 5)
             },
             "Doctor": {
-                "financial_capability": (2, 4), "trend_receptivity": (1, 3),
-                "social_status": (3, 5), "energy_level": (2, 4), "time_budget": (1, 2)
+                "financial_capability": (2, 4), "trend_receptivity": (0.5, 1.5),
+                "social_status": (3, 5), "energy_level": (2, 5), "time_budget": (1, 2)
             }
         }
         
@@ -371,6 +368,6 @@ class Person:
             social_status=round(random.uniform(*ranges["social_status"]), 3),
             trend_receptivity=round(random.uniform(*ranges["trend_receptivity"]), 3),
             energy_level=round(random.uniform(*ranges["energy_level"]), 3),
-            time_budget=round(random.uniform(*ranges["time_budget"]), 3),
+            time_budget=float(round(random.uniform(*ranges["time_budget"]) * 2) / 2),  # Округление до 0.5, принудительно float
             interests=base_interests
         ) 

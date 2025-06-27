@@ -156,7 +156,8 @@ class DatabaseRepository:
             return result.scalar_one_or_none()
             
     async def update_simulation_status(self, simulation_id: UUID, status: str, 
-                                     end_time: Optional[datetime] = None) -> None:
+                                     end_time: Optional[datetime] = None, 
+                                     reason: Optional[str] = None) -> None:
         """Update simulation status."""
         async with self.SessionLocal() as session:
             stmt = update(SimulationRun).where(
@@ -169,12 +170,29 @@ class DatabaseRepository:
             await session.execute(stmt)
             await session.commit()
             
+            logger.info(json.dumps({
+                "event": "simulation_status_updated",
+                "simulation_id": str(simulation_id),
+                "status": status,
+                "reason": reason
+            }))
+            
     async def get_active_simulations(self) -> List[SimulationRun]:
         """Get all active (running) simulations."""
         async with self.ReadOnlySession() as session:
             result = await session.execute(
                 select(SimulationRun).where(
                     SimulationRun.status.in_(["RUNNING", "ACTIVE", "STOPPING"])
+                ).order_by(SimulationRun.start_time.desc())
+            )
+            return result.scalars().all()
+            
+    async def get_simulations_by_status(self, status: str) -> List[SimulationRun]:
+        """Get simulations by specific status."""
+        async with self.ReadOnlySession() as session:
+            result = await session.execute(
+                select(SimulationRun).where(
+                    SimulationRun.status == status
                 ).order_by(SimulationRun.start_time.desc())
             )
             return result.scalars().all()
@@ -250,6 +268,18 @@ class DatabaseRepository:
             session.add(person)
             await session.commit()
             
+    async def create_person_attribute_history(self, history_record: "PersonAttributeHistory") -> None:
+        """Create new person attribute history record."""
+        async with self.SessionLocal() as session:
+            session.add(history_record)
+            await session.commit()
+            
+            logger.info(json.dumps({
+                "event": "person_attribute_history_created",
+                "person_id": str(history_record.person_id),
+                "reason": history_record.reason
+            }))
+            
     async def bulk_create_persons(self, persons: List["Person"]) -> None:
         """Create multiple persons efficiently."""
         if not persons:
@@ -323,14 +353,28 @@ class DatabaseRepository:
             return len(result.scalars().all())
             
     async def get_persons_for_simulation(self, simulation_id: UUID, limit: int = 1000) -> List["Person"]:
-        """Get persons for a simulation with limit, converting DB models to domain models."""
+        """
+        Get persons for a simulation with limit, converting DB models to domain models.
+        
+        Args:
+            simulation_id: Simulation ID or None for global pool
+            limit: Maximum number of persons to return
+        """
         from ..db.models import Person as DBPerson
         from ..domain.person import Person as DomainPerson
         
         async with self.ReadOnlySession() as session:
-            result = await session.execute(
-                select(DBPerson).where(DBPerson.simulation_id == simulation_id).limit(limit)
-            )
+            if simulation_id is None:
+                # Глобальный пул агентов - берем случайных
+                result = await session.execute(
+                    select(DBPerson).order_by(text("RANDOM()")).limit(limit)
+                )
+            else:
+                # Агенты конкретной симуляции
+                result = await session.execute(
+                    select(DBPerson).where(DBPerson.simulation_id == simulation_id).limit(limit)
+                )
+            
             db_persons = result.scalars().all()
             
             # Конвертируем модели БД в доменные модели
