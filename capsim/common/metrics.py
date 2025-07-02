@@ -8,9 +8,9 @@ from functools import wraps
 from typing import Callable, Dict, Optional
 
 from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
-from structlog import get_logger
+import logging
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 # Request metrics
 REQUEST_COUNT = Counter(
@@ -147,6 +147,19 @@ MEMORY_USAGE = Gauge(
 CPU_USAGE = Gauge(
     'capsim_cpu_usage_percent',
     'CPU usage percentage'
+)
+
+# v1.8: New action tracking metrics
+ACTIONS_TOTAL = Counter(
+    'capsim_actions_total',
+    'Total actions performed by agents',
+    ['action_type', 'level', 'profession']
+)
+
+AGENT_ATTRIBUTE = Gauge(
+    'capsim_agent_attribute',
+    'Agent attribute P95 values',
+    ['attribute', 'profession']
 )
 
 
@@ -312,5 +325,49 @@ def get_metrics() -> str:
 
 
 def get_metrics_content_type() -> str:
-    """Get the content type for metrics endpoint."""
-    return CONTENT_TYPE_LATEST 
+    """Return metrics content type."""
+    return CONTENT_TYPE_LATEST
+
+
+def record_action(action_type: str, level: str = "", profession: str = ""):
+    """
+    Record an action performed by an agent.
+    
+    Args:
+        action_type: Type of action (Post, Purchase, SelfDev)
+        level: Purchase level (L1, L2, L3) or empty for other actions
+        profession: Agent profession
+    """
+    ACTIONS_TOTAL.labels(
+        action_type=action_type,
+        level=level,
+        profession=profession
+    ).inc()
+
+
+def update_agent_attributes(persons):
+    """
+    Update P95 metrics for all agent attributes.
+    
+    Args:
+        persons: List of Person objects
+    """
+    import numpy as np
+    from collections import defaultdict
+    
+    by_profession = defaultdict(lambda: defaultdict(list))
+    
+    for person in persons:
+        prof = person.profession
+        by_profession[prof]['energy_level'].append(person.energy_level)
+        by_profession[prof]['financial_capability'].append(person.financial_capability)
+        by_profession[prof]['trend_receptivity'].append(person.trend_receptivity)
+        by_profession[prof]['social_status'].append(person.social_status)
+        by_profession[prof]['time_budget'].append(person.time_budget)
+        by_profession[prof]['purchases_today'].append(person.purchases_today)
+    
+    for prof, attributes in by_profession.items():
+        for attr_name, values in attributes.items():
+            if values:  # Проверяем что есть значения
+                p95_value = np.percentile(values, 95)
+                AGENT_ATTRIBUTE.labels(attribute=attr_name, profession=prof).set(p95_value) 

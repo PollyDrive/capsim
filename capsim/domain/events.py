@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 from dataclasses import dataclass
 import json
 import logging
+from enum import IntEnum
 
 if TYPE_CHECKING:
     from ..engine.simulation_engine import SimulationEngine
@@ -15,13 +16,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class EventPriority:
-    """Константы приоритетов событий."""
-    LAW = 1
-    WEATHER = 2
-    TREND = 3
-    AGENT_ACTION = 4
-    SYSTEM = 5
+class EventPriority(IntEnum):
+    """Event priority levels for v1.8 priority queue system."""
+    SYSTEM = 100       # DailyResetEvent, EnergyRecoveryEvent - highest priority
+    AGENT_ACTION = 50  # PublishPost, Purchase, SelfDev actions
+    TREND = 30         # TrendInfluenceEvent - social influence processing
+    LAW = 20           # LawEvent - external law changes
+    WEATHER = 15       # WeatherEvent - external weather changes
+    LOW = 0            # Default/fallback priority
 
 
 @dataclass
@@ -92,7 +94,7 @@ class PublishPostAction(BaseEvent):
                 "reason": "insufficient_resources",
                 "energy": agent.energy_level,
                 "time_budget": agent.time_budget
-            }))
+            }, default=str))
             return
             
         # Создать новый тренд
@@ -170,13 +172,17 @@ class PublishPostAction(BaseEvent):
             "social_status": 0.1   # Небольшой прирост статуса от публикации
         })
         
-        # Добавить в batch обновления (только состояние, без истории)
+        # v1.8: Обновить атрибуты отслеживания действий
+        agent.last_post_ts = self.timestamp
+        
+        # Добавить в batch обновления (включая новые атрибуты v1.8)
         engine.add_to_batch_update({
             "type": "person_state",
             "id": self.agent_id,
             "energy_level": agent.energy_level,
             "time_budget": agent.time_budget,
             "social_status": agent.social_status,
+            "last_post_ts": agent.last_post_ts,  # v1.8: Время последнего поста
             "reason": "PublishPostAction",
             "timestamp": self.timestamp
         })
@@ -200,153 +206,155 @@ class PublishPostAction(BaseEvent):
             "virality": base_virality,
             "coverage": coverage,
             "timestamp": self.timestamp
-        }))
+        }, default=str))
 
 
 class EnergyRecoveryEvent(BaseEvent):
-    """Системное событие восстановления энергии агентов."""
+    """Event для восстановления энергии агентов."""
     
     def __init__(self, timestamp: float):
         super().__init__(EventPriority.SYSTEM, timestamp)
-        
+    
     def process(self, engine: "SimulationEngine") -> None:
-        """
-        Восстанавливает энергию всех агентов.
-        
-        Логика:
-        - Если energy_level < 3.0: устанавливается 5.0
-        - Иначе: добавляется 2.0 (максимум 5.0)
-        """
-        recovery_count = 0
-        batch_updates = []
+        """Execute energy recovery for all agents."""
+        recovery_amount = 0.2
+        updated_count = 0
         
         for agent in engine.agents:
-            old_energy = agent.energy_level
-            
-            if agent.energy_level < 3.0:
-                agent.energy_level = 5.0
-            else:
-                agent.energy_level = min(5.0, agent.energy_level + 2.0)
+            if agent.energy_level < 5.0:
+                old_energy = agent.energy_level
+                agent.energy_level = min(5.0, agent.energy_level + recovery_amount)
                 
-            if agent.energy_level != old_energy:
-                recovery_count += 1
-                batch_updates.append({
-                    "type": "person_state", 
-                    "id": agent.id,
-                    "energy_level": agent.energy_level,
-                    "reason": "EnergyRecovery",
-                    "timestamp": self.timestamp
-                })
-                
-                batch_updates.append({
-                    "type": "attribute_history",
-                    "simulation_id": agent.simulation_id,
-                    "person_id": agent.id,
-                    "attribute_name": "energy_level",
-                    "old_value": old_energy,
-                    "new_value": agent.energy_level,
-                    "delta": agent.energy_level - old_energy,
-                    "reason": "EnergyRecovery",
-                    "change_timestamp": self.timestamp
-                })
+                if agent.energy_level != old_energy:
+                    updated_count += 1
         
-        # Добавить все обновления в batch
-        for update in batch_updates:
-            engine.add_to_batch_update(update)
-            
-        # Запланировать следующее восстановление энергии (каждые 6 часов = 360 минут)
-        next_recovery = EnergyRecoveryEvent(self.timestamp + 360.0)
+        # Schedule next energy recovery event (every 60 minutes)
+        next_recovery = EnergyRecoveryEvent(timestamp=self.timestamp + 60.0)
         engine.add_event(next_recovery, EventPriority.SYSTEM, next_recovery.timestamp)
         
-        logger.info(json.dumps({
-            "event": "energy_recovery_completed",
-            "agents_affected": recovery_count,
-            "total_agents": len(engine.agents),
-            "next_recovery_at": self.timestamp + 360.0,
-            "timestamp": self.timestamp
-        }))
+        if updated_count > 0:
+            logger.info(json.dumps({
+                "event": "energy_recovery_completed",
+                "updated_agents": updated_count,
+                "recovery_amount": recovery_amount,
+                "timestamp": self.timestamp
+            }, default=str))
 
 
 class DailyResetEvent(BaseEvent):
-    """Системное событие сброса временных бюджетов."""
+    """v1.8: Event для ежедневного сброса счетчиков агентов (каждые 1440 минут)."""
     
     def __init__(self, timestamp: float):
         super().__init__(EventPriority.SYSTEM, timestamp)
-        
+    
     def process(self, engine: "SimulationEngine") -> None:
-        """
-        Сбрасывает временные бюджеты агентов по профессиям.
-        """
-        # Временные бюджеты по профессиям согласно ТЗ
-        profession_budgets = {
-            "ShopClerk": (3, 5),
-            "Worker": (3, 5), 
-            "Developer": (2, 4),
-            "Politician": (2, 4),
-            "Blogger": (3, 5),
-            "Businessman": (2, 4),
-            "SpiritualMentor": (2, 4),
-            "Philosopher": (2, 4),
-            "Unemployed": (3, 5),
-            "Teacher": (2, 4),
-            "Artist": (3, 5),
-            "Doctor": (1, 2)
-        }
-        
-        import random
+        """Execute daily reset for all agents."""
         reset_count = 0
-        batch_updates = []
         
         for agent in engine.agents:
-            budget_range = profession_budgets.get(agent.profession, (1, 3))
-            old_budget = agent.time_budget
-            # Унифицировано: float с округлением до 0.5
-            raw_budget = random.uniform(*budget_range)
-            agent.time_budget = float(round(raw_budget * 2) / 2)
-            
-            if agent.time_budget != old_budget:
+            if agent.purchases_today > 0:
+                agent.purchases_today = 0
                 reset_count += 1
-                batch_updates.append({
-                    "type": "person_state",
-                    "id": agent.id,
-                    "time_budget": agent.time_budget,
-                    "reason": "DailyReset",
-                    "timestamp": self.timestamp
-                })
         
-        # Добавить обновления в batch
-        for update in batch_updates:
-            engine.add_to_batch_update(update)
-            
-        # Запланировать следующий сброс (каждые 24 часа = 1440 минут)
-        next_reset = DailyResetEvent(self.timestamp + 1440.0)
+        # Schedule next daily reset (every 1440 minutes = 24 hours)
+        next_reset = DailyResetEvent(timestamp=self.timestamp + 1440.0)
         engine.add_event(next_reset, EventPriority.SYSTEM, next_reset.timestamp)
-        
-        # НОВОЕ: Сбрасываем ежедневные счетчики действий агентов
-        current_day = int(self.timestamp // 1440)
-        if hasattr(engine, '_daily_action_counts'):
-            # Удаляем счетчики предыдущих дней
-            keys_to_remove = []
-            for key in engine._daily_action_counts:
-                if key.endswith(f"_{current_day - 1}") or key.endswith(f"_{current_day - 2}"):
-                    keys_to_remove.append(key)
-            
-            for key in keys_to_remove:
-                del engine._daily_action_counts[key]
-                
-            logger.info(json.dumps({
-                "event": "daily_action_counters_cleaned",
-                "removed_keys": len(keys_to_remove),
-                "current_day": current_day,
-                "timestamp": self.timestamp
-            }))
         
         logger.info(json.dumps({
             "event": "daily_reset_completed",
-            "budgets_reset": reset_count,
-            "next_reset_time": self.timestamp + 1440.0,
+            "reset_agents": reset_count,
+            "total_agents": len(engine.agents),
+            "timestamp": self.timestamp,
+            "next_reset": next_reset.timestamp
+        }, default=str))
+
+
+class PurchaseAction(BaseEvent):
+    """v1.8: Event для покупок агентов."""
+    
+    def __init__(self, agent_id: UUID, purchase_level: str, timestamp: float):
+        super().__init__(EventPriority.AGENT_ACTION, timestamp)
+        self.agent_id = agent_id
+        self.purchase_level = purchase_level  # L1, L2, L3
+    
+    def process(self, engine: "SimulationEngine") -> None:
+        """Execute purchase action."""
+        from ..common.settings import action_config
+        
+        agent = next((a for a in engine.agents if a.id == self.agent_id), None)
+        if not agent:
+            return
+            
+        # Apply purchase effects
+        effects = action_config.effects["PURCHASE"][self.purchase_level]
+        agent.apply_effects(effects)
+        
+        # Update v1.8 tracking attributes
+        agent.purchases_today += 1
+        agent.last_purchase_ts[self.purchase_level] = self.timestamp
+        
+        # Add to batch updates (including v1.8 attributes)
+        engine.add_to_batch_update({
+            "type": "person_state",
+            "id": self.agent_id,
+            "energy_level": agent.energy_level,
+            "time_budget": agent.time_budget,
+            "financial_capability": agent.financial_capability,
+            "social_status": agent.social_status,
+            "purchases_today": agent.purchases_today,
+            "last_purchase_ts": agent.last_purchase_ts,
+            "reason": f"PurchaseAction_{self.purchase_level}",
             "timestamp": self.timestamp
-        }))
+        })
+        
+        logger.info(json.dumps({
+            "event": "purchase_completed",
+            "agent_id": str(self.agent_id),
+            "purchase_level": self.purchase_level,
+            "purchases_today": agent.purchases_today,
+            "timestamp": self.timestamp
+        }, default=str))
+
+
+class SelfDevAction(BaseEvent):
+    """v1.8: Event для саморазвития агентов."""
+    
+    def __init__(self, agent_id: UUID, timestamp: float):
+        super().__init__(EventPriority.AGENT_ACTION, timestamp)
+        self.agent_id = agent_id
+    
+    def process(self, engine: "SimulationEngine") -> None:
+        """Execute self-development action."""
+        from ..common.settings import action_config
+        
+        agent = next((a for a in engine.agents if a.id == self.agent_id), None)
+        if not agent:
+            return
+            
+        # Apply self-development effects
+        effects = action_config.effects["SELF_DEV"]
+        agent.apply_effects(effects)
+        
+        # Update v1.8 tracking attributes
+        agent.last_selfdev_ts = self.timestamp
+        
+        # Add to batch updates (including v1.8 attributes)
+        engine.add_to_batch_update({
+            "type": "person_state",
+            "id": self.agent_id,
+            "energy_level": agent.energy_level,
+            "time_budget": agent.time_budget,
+            "trend_receptivity": agent.trend_receptivity,
+            "last_selfdev_ts": agent.last_selfdev_ts,
+            "reason": "SelfDevAction",
+            "timestamp": self.timestamp
+        })
+        
+        logger.info(json.dumps({
+            "event": "selfdev_completed",
+            "agent_id": str(self.agent_id),
+            "timestamp": self.timestamp
+        }, default=str))
 
 
 class SaveDailyTrendEvent(BaseEvent):
@@ -394,7 +402,7 @@ class SaveDailyTrendEvent(BaseEvent):
             "simulation_day": current_day,
             "topics_processed": len(topic_stats),
             "timestamp": self.timestamp
-        }))
+        }, default=str))
 
 
 class LawEvent(BaseEvent):
@@ -418,7 +426,7 @@ class LawEvent(BaseEvent):
             "impact_factor": self.impact_factor,
             "affected_agents": len(engine.agents),
             "timestamp": self.timestamp
-        }))
+        }, default=str))
 
 
 class WeatherEvent(BaseEvent):
@@ -439,7 +447,7 @@ class WeatherEvent(BaseEvent):
             "weather_type": self.weather_type,
             "severity": self.severity,
             "timestamp": self.timestamp
-        }))
+        }, default=str))
 
 
 class TrendInfluenceEvent(BaseEvent):
@@ -460,7 +468,7 @@ class TrendInfluenceEvent(BaseEvent):
                 "event": "trend_not_found",
                 "trend_id": str(self.trend_id),
                 "timestamp": self.timestamp
-            }))
+            }, default=str))
             return
             
         # Рассчитываем параметры влияния
@@ -477,13 +485,14 @@ class TrendInfluenceEvent(BaseEvent):
             if agent.id == trend.originator_id:
                 continue
                 
-            # Проверка вероятности влияния
-            influence_probability = (
+            # Проверка вероятности влияния (улучшенная формула для Phase 3)
+            influence_probability = min(0.8, (
                 current_virality / 5.0 * 
                 coverage_factor * 
                 agent.trend_receptivity / 5.0 * 
-                agent.get_affinity_for_topic(trend.topic) / 5.0
-            )
+                agent.get_affinity_for_topic(trend.topic) / 5.0 * 
+                2.5  # ИСПРАВЛЕНИЕ: Мультипликатор для увеличения вероятности влияния
+            ))
             
             import random
             if random.random() < influence_probability:
@@ -526,11 +535,11 @@ class TrendInfluenceEvent(BaseEvent):
                 response_probability = (
                     influence_strength * 
                     agent.social_status / 5.0 * 
-                    0.6  # ИСПРАВЛЕНИЕ: Увеличиваем базовую вероятность ответа
+                    1.2  # ИСПРАВЛЕНИЕ: Удваиваем базовую вероятность ответа с 0.6 до 1.2
                 )
                 
                 if (random.random() < response_probability and 
-                    agent.energy_level >= 0.5 and  # ИСПРАВЛЕНИЕ: Снижаем требования к энергии для ответных постов
+                    agent.energy_level >= 0.3 and  # ИСПРАВЛЕНИЕ: Еще больше снижаем требования к энергии
                     engine._can_agent_act_today(agent.id)):
                     
                     # ИСПРАВЛЕНИЕ: Создаем ответный пост на ту же тему что и родительский тренд
@@ -563,7 +572,7 @@ class TrendInfluenceEvent(BaseEvent):
                 "original_trend": str(trend.trend_id),
                 "scheduled_count": scheduled_count,
                 "timestamp": self.timestamp
-            }))
+            }, default=str))
         
         logger.info(json.dumps({
             "event": "trend_influence_processed",
@@ -574,4 +583,4 @@ class TrendInfluenceEvent(BaseEvent):
             "total_interactions": trend.total_interactions,
             "current_virality": current_virality,
             "timestamp": self.timestamp
-        })) 
+        }, default=str)) 

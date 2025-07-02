@@ -328,6 +328,11 @@ class DatabaseRepository:
                 time_budget=person.time_budget,
                 interests=person.interests,
                 exposure_history={},  # Пустая история в начале
+                # v1.8 fields
+                purchases_today=person.purchases_today,
+                last_post_ts=person.last_post_ts,
+                last_selfdev_ts=person.last_selfdev_ts,
+                last_purchase_ts=person.last_purchase_ts,
                 created_at=person.created_at
             )
             db_persons.append(db_person)
@@ -390,6 +395,11 @@ class DatabaseRepository:
                     time_budget=db_person.time_budget,
                     interests=db_person.interests or {},
                     exposure_history=db_person.exposure_history or {},
+                    # v1.8 fields
+                    purchases_today=getattr(db_person, 'purchases_today', 0),
+                    last_post_ts=getattr(db_person, 'last_post_ts', None),
+                    last_selfdev_ts=getattr(db_person, 'last_selfdev_ts', None),
+                    last_purchase_ts=getattr(db_person, 'last_purchase_ts', {}),
                     simulation_id=db_person.simulation_id,
                     created_at=db_person.created_at
                 )
@@ -643,17 +653,27 @@ class DatabaseRepository:
             )
             trends_count = len(trends_result.scalars().all())
             
-            # Count events
+            # Count all events
             events_result = await session.execute(
                 select(Event).where(Event.simulation_id == simulation_id)
             )
             events_count = len(events_result.scalars().all())
             
+            # Count action events (PublishPost, Purchase, SelfDev)
+            action_events_result = await session.execute(
+                select(Event).where(
+                    Event.simulation_id == simulation_id,
+                    Event.event_type.in_(['PublishPostAction', 'PurchaseAction', 'SelfDevAction'])
+                )
+            )
+            actions_count = len(action_events_result.scalars().all())
+            
             return {
                 "simulation_id": str(simulation_id),
                 "persons_count": persons_count,
                 "trends_count": trends_count,
-                "events_count": events_count
+                "events_count": events_count,
+                "actions_count": actions_count
             }
 
     async def execute_query(self, query: str, params: tuple = None) -> List[Dict[str, Any]]:

@@ -274,6 +274,10 @@ BATCH_SIZE=100                    # Размер batch-commit
 SIM_SPEED_FACTOR=60              # Ускорение симуляции
 DECIDE_SCORE_THRESHOLD=0.25      # Порог принятия решений
 TREND_ARCHIVE_THRESHOLD_DAYS=3   # Архивирование трендов
+
+# v1.8 Action System
+POST_COOLDOWN_MIN=60             # Cooldown для постов
+SELF_DEV_COOLDOWN_MIN=30         # Cooldown для саморазвития
 ```
 
 ## 🔧 Configuration
@@ -288,6 +292,8 @@ TREND_ARCHIVE_THRESHOLD_DAYS=3   # Архивирование трендов
 | `SIM_SPEED_FACTOR` | 60 | Simulation speed multiplier |
 | `ENABLE_METRICS` | true | Prometheus metrics export |
 | `REALTIME_MODE` | false | Real-time simulation mode |
+| `POST_COOLDOWN_MIN` | 60 | **v1.8** Post action cooldown (minutes) |
+| `SELF_DEV_COOLDOWN_MIN` | 30 | **v1.8** Self-development cooldown (minutes) |
 
 ### Scaling Configuration
 
@@ -302,6 +308,28 @@ services:
           memory: 2G
           cpus: '1.0'
 ```
+
+### v1.8 Action Configuration
+
+**Новая система действий** через YAML конфигурацию в `config/actions.yaml`:
+
+```yaml
+SHOP_WEIGHTS:                 # Профессиональные модификаторы покупок
+  Businessman: 1.20           # +20% склонность к покупкам
+  Developer: 1.00             # Базовая склонность
+  Artist: 0.75                # -25% склонность к покупкам
+
+PURCHASE:                     # Уровни покупок
+  L1: { financial_capability: -0.05, energy_level: 0.20 }    # Порог: 0.05
+  L2: { financial_capability: -0.50, energy_level: -0.10 }   # Порог: 0.50
+  L3: { financial_capability: -2.00, social_status: 1.00 }   # Порог: 2.00
+```
+
+**Ключевые особенности v1.8**:
+- Покупки L1/L2/L3 с разными финансовыми порогами
+- Cooldown система для ограничения частоты действий  
+- Shop weights по профессиям (независимо от темы тренда)
+- Дневной лимит покупок (5 в день)
 
 ## 📚 API Documentation
 
