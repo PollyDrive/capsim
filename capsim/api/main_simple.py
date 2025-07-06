@@ -6,6 +6,8 @@ import os
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+import psycopg2
+from capsim.common.db_config import SYNC_DSN
 
 try:
     from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
@@ -271,38 +273,13 @@ _stopped_simulations = []
 @app.get("/stats/events", tags=["Statistics"])
 async def events_statistics():
     """Get events table statistics and simulation data from REAL database."""
-    import psycopg2
     from datetime import datetime, timedelta
     
     current_time = datetime.utcnow()  # Объявляем заранее
     
     try:
-        # ИСПРАВЛЕНИЕ: Подключаемся к реальной БД вместо генерации мок-данных
-        # Автоопределение: Docker (postgres) vs локальная разработка (localhost)
-        import os
-        is_docker = os.getenv("DOCKER_ENV", "false").lower() == "true"
-        
-        if is_docker:
-            # В Docker контейнере подключаемся к сервису postgres
-            host = "postgres"
-            database = os.getenv("POSTGRES_DB", "capsim")
-            user = os.getenv("POSTGRES_USER", "postgres") 
-            password = os.getenv("POSTGRES_PASSWORD", "postgres_password")
-            print(f"Docker DB connection: {user}@{host}:{database}")
-        else:
-            # Локальная разработка - подключаемся к localhost
-            host = "localhost"
-            database = "capsim_db"
-            user = "postgres"
-            password = "capsim321"
-        
-        conn = psycopg2.connect(
-            host=host,
-            database=database, 
-            user=user,
-            password=password,
-            port=5432
-        )
+        # Unified DSN from env (see capsim/common/db_config.py)
+        conn = psycopg2.connect(SYNC_DSN.replace("+asyncpg", ""))
         cur = conn.cursor()
         
         # Логируем какую БД используем
@@ -530,13 +507,7 @@ async def update_metrics_from_db():
         from datetime import datetime, timedelta
         
         # Connect to real database - ПРИНУДИТЕЛЬНО к правильной БД
-        conn = psycopg2.connect(
-            host="localhost",
-            database="capsim_db", 
-            user="postgres",
-            password="capsim321",
-            port=5432
-        )
+        conn = psycopg2.connect(SYNC_DSN.replace("+asyncpg", ""))
         cur = conn.cursor()
         
         current_time = datetime.utcnow()

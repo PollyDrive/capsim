@@ -191,12 +191,13 @@ class PublishPostAction(BaseEvent):
         # Это предотвращает FK нарушения при создании TrendInfluenceEvent
         engine._force_commit_after_this_event = True
         
-        # Запланировать распространение влияния тренда
-        influence_event = TrendInfluenceEvent(
-            timestamp=self.timestamp + 5.0,  # Через 5 минут
-            trend_id=new_trend.trend_id
-        )
-        engine.add_event(influence_event, EventPriority.TREND, influence_event.timestamp)
+        # Запланировать распространение влияния тренда только если тренд успешно создан
+        if new_trend and new_trend.trend_id:
+            influence_event = TrendInfluenceEvent(
+                timestamp=self.timestamp + 5.0,  # Через 5 минут
+                trend_id=new_trend.trend_id
+            )
+            engine.add_event(influence_event, EventPriority.TREND, influence_event.timestamp)
         
         logger.info(json.dumps({
             "event": "post_published",
@@ -471,6 +472,25 @@ class TrendInfluenceEvent(BaseEvent):
             }, default=str))
             return
             
+        # Дополнительная проверка: убедиться что тренд существует в базе данных
+        try:
+            # Проверяем что тренд действительно существует
+            if not hasattr(trend, 'trend_id') or not trend.trend_id:
+                logger.warning(json.dumps({
+                    "event": "trend_invalid_id",
+                    "trend_id": str(self.trend_id),
+                    "timestamp": self.timestamp
+                }, default=str))
+                return
+        except Exception as e:
+            logger.error(json.dumps({
+                "event": "trend_validation_error",
+                "trend_id": str(self.trend_id),
+                "error": str(e),
+                "timestamp": self.timestamp
+            }, default=str))
+            return
+            
         # Рассчитываем параметры влияния
         current_virality = trend.calculate_current_virality()
         coverage_factor = trend.get_coverage_factor()
@@ -545,16 +565,17 @@ class TrendInfluenceEvent(BaseEvent):
                     # ИСПРАВЛЕНИЕ: Создаем ответный пост на ту же тему что и родительский тренд
                     response_topic = trend.topic  # Используем тему родительского тренда
                     
-                    # Создаем будущее действие с parent_trend_id
-                    response_delay = random.uniform(10.0, 60.0)
-                    new_action = {
-                        "agent_id": agent.id,
-                        "action_type": "PublishPostAction",
-                        "topic": response_topic,
-                        "timestamp": self.timestamp + response_delay,
-                        "trigger_trend_id": trend.trend_id  # Указываем что это ответ на тренд
-                    }
-                    new_actions_batch.append(new_action)
+                    # Создаем будущее действие с parent_trend_id только если тренд существует
+                    if trend and trend.trend_id:
+                        response_delay = random.uniform(10.0, 60.0)
+                        new_action = {
+                            "agent_id": agent.id,
+                            "action_type": "PublishPostAction",
+                            "topic": response_topic,
+                            "timestamp": self.timestamp + response_delay,
+                            "trigger_trend_id": trend.trend_id  # Указываем что это ответ на тренд
+                        }
+                        new_actions_batch.append(new_action)
                     
                     # ИСПРАВЛЕНИЕ: Увеличиваем total_interactions у родительского тренда
                     trend.add_interaction()

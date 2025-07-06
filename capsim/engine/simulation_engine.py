@@ -423,6 +423,15 @@ class SimulationEngine:
             # События трендов имеют trend_id  
             if hasattr(event, 'trend_id'):
                 trend_id = event.trend_id
+                # Проверяем что тренд существует в активных трендах
+                if trend_id and str(trend_id) not in self.active_trends:
+                    logger.warning(json.dumps({
+                        "event": "trend_not_found_for_event",
+                        "trend_id": str(trend_id),
+                        "event_type": event.__class__.__name__,
+                        "timestamp": event.timestamp
+                    }, default=str))
+                    trend_id = None  # Не сохраняем ссылку на несуществующий тренд
                 
             # Системные события НЕ имеют agent_id или trend_id
             # (EnergyRecoveryEvent, DailyResetEvent, SaveDailyTrendEvent)
@@ -496,6 +505,14 @@ class SimulationEngine:
         
         # Ограничиваем количество seed событий (10-20% от подходящих агентов)
         import random
+        if not suitable_agents:
+            logger.warning(json.dumps({
+                "event": "no_suitable_agents_for_seed",
+                "total_agents": len(self.agents),
+                "timestamp": self.current_time
+            }, default=str))
+            return 0
+            
         seed_count = max(1, min(len(suitable_agents), int(len(suitable_agents) * 0.15)))
         selected_agents = random.sample(suitable_agents, seed_count)
         
@@ -641,11 +658,23 @@ class SimulationEngine:
             timestamp = action_data["timestamp"]
             
             if action_type == "PublishPostAction":
+                # Проверяем что trigger_trend_id существует в активных трендах
+                trigger_trend_id = action_data.get("trigger_trend_id")
+                if trigger_trend_id and str(trigger_trend_id) not in self.active_trends:
+                    logger.warning(json.dumps({
+                        "event": "trigger_trend_not_found",
+                        "trigger_trend_id": str(trigger_trend_id),
+                        "agent_id": str(agent_id),
+                        "timestamp": timestamp
+                    }, default=str))
+                    # Продолжаем без trigger_trend_id
+                    trigger_trend_id = None
+                
                 action_event = PublishPostAction(
                     agent_id=agent_id,
                     topic=action_data["topic"],
                     timestamp=timestamp,
-                    trigger_trend_id=action_data.get("trigger_trend_id")
+                    trigger_trend_id=trigger_trend_id
                 )
                 
                 self.add_event(action_event, EventPriority.AGENT_ACTION, timestamp)
@@ -854,19 +883,43 @@ class SimulationEngine:
                 
                 # ИСПРАВЛЕНИЕ: Обновить состояния агентов
                 if person_updates:
-                    # Преобразуем в формат ожидаемый bulk_update_persons
-                    formatted_updates = []
+                    # Разделяем обновления на Person и SimulationParticipant
+                    person_updates_clean = []
+                    participant_updates = []
+                    
                     for update in person_updates:
-                        formatted_update = {
-                            'id': update['id'],  # Основной ключ для UPDATE
+                        # Обновления для таблицы Person
+                        person_update = {
+                            'id': update['id'],
                         }
-                        # Добавляем только измененные атрибуты (исключаем мета-поля)
+                        # Обновления для таблицы SimulationParticipant
+                        participant_update = {
+                            'simulation_id': self.simulation_id,
+                            'person_id': update['id'],
+                        }
+                        
+                        # Распределяем поля по таблицам
                         for key, value in update.items():
                             if key not in ['type', 'id', 'reason', 'source_trend_id', 'timestamp']:
-                                formatted_update[key] = value
-                        formatted_updates.append(formatted_update)
+                                if key in ['last_post_ts', 'last_selfdev_ts', 'last_purchase_ts', 'purchases_today']:
+                                    # Эти поля идут в SimulationParticipant
+                                    participant_update[key] = value
+                                else:
+                                    # Остальные поля идут в Person
+                                    person_update[key] = value
+                        
+                        if len(person_update) > 1:  # Есть поля для Person
+                            person_updates_clean.append(person_update)
+                        if len(participant_update) > 2:  # Есть поля для SimulationParticipant
+                            participant_updates.append(participant_update)
                     
-                    await self.db_repo.bulk_update_persons(formatted_updates)
+                    # Обновляем Person
+                    if person_updates_clean:
+                        await self.db_repo.bulk_update_persons(person_updates_clean)
+                    
+                    # Обновляем SimulationParticipant
+                    if participant_updates:
+                        await self.db_repo.bulk_update_simulation_participants(participant_updates)
                 
                 # ИСПРАВЛЕНИЕ: Создать новые тренды в БД
                 if trend_creations:

@@ -1,105 +1,84 @@
 apiVersion: 1
 
 groups:
-  - orgId: 1
-    name: performance-tuning-alerts
-    folder: Performance Tuning
-    interval: 30s
+  - name: CAPSIM Performance Alerts
+    folder: CAPSIM
+    interval: 1m
     rules:
       - uid: cpu-temperature-high
-        title: 🌡️ CPU Temperature High
+        title: "🌡️ High CPU Temperature"
         condition: A
-        data:
-          - refId: A
-            queryType: ""
-            relativeTimeRange:
-              from: 300
-              to: 0
-            datasourceUid: prometheus
-            model:
-              expr: macos_cpu_temperature_celsius
-              intervalMs: 1000
-              maxDataPoints: 43200
-              refId: A
-        noDataState: NoData
-        execErrState: Alerting
         for: 2m
+        noDataState: OK
+        execErrState: Alerting
         annotations:
+          summary: "High CPU temperature detected ({{ $values.A.Value }}°C)"
           description: |
-            CPU temperature is {{ $values.A.Value }}°C, which exceeds the safe threshold of 85°C.
+            CPU temperature is {{ $values.A.Value }}°C, which is above the threshold of 85°C.
             
-            This may cause thermal throttling and performance degradation. 
-            
-            **Immediate Actions:**
-            - Check system cooling
-            - Reduce workload if possible
-            - Consider applying CPU-related performance tuning levers
-          summary: CPU temperature {{ $values.A.Value }}°C exceeds 85°C threshold
-          runbook_url: "https://docs.capsim.io/troubleshooting/cpu-temperature"
-        labels:
-          severity: warning
-          component: system
-          tuning_trigger: "true"
-          sla_violation: "true"
-        condition: A > 85
-
-      - uid: io-wait-high
-        title: 💾 High IO Wait
-        condition: A
-        data:
-          - refId: A
-            queryType: ""
-            relativeTimeRange:
-              from: 300
-              to: 0
-            datasourceUid: prometheus
-            model:
-              expr: avg(rate(node_cpu_seconds_total{mode="iowait"}[2m])) * 100
-              intervalMs: 1000
-              maxDataPoints: 43200
-              refId: A
-        noDataState: NoData
-        execErrState: NoData
-        for: 3m
-        annotations:
-          description: |
-            IO wait percentage is {{ $values.A.Value }}%, exceeding the 25% threshold.
-            
-            System is spending too much time waiting for disk operations.
+            This indicates potential thermal throttling or cooling issues.
             
             **Recommended Actions:**
-            - Check disk usage and performance
-            - Consider increasing shared_buffers
-            - Adjust checkpoint_completion_target
-            - Monitor for heavy write operations
-          summary: IO wait {{ $values.A.Value }}% exceeds 25% threshold
-          runbook_url: "https://docs.capsim.io/troubleshooting/io-wait"
+            - Check cooling system
+            - Monitor ambient temperature
+            - Consider reducing CPU load
+            - Check for dust buildup
         labels:
           severity: warning
-          component: storage
-          tuning_trigger: "true"
-          sla_violation: "true"
-        condition: A > 25
-
-      - uid: wal-size-growth
-        title: 📝 WAL Size Growth
-        condition: A
+          team: infrastructure
         data:
           - refId: A
-            queryType: ""
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "capsim_events_insert_rate_per_minute > 100"
+              instant: false
+              range: true
+              refId: A
+
+      - uid: io-wait-high
+        title: "💾 High IO Wait"
+        condition: A
+        for: 1m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: "High IO wait detected ({{ $values.A.Value }}%)"
+          description: |
+            IO wait is {{ $values.A.Value }}%, which is above the threshold of 25%.
+            
+            This indicates disk I/O bottlenecks.
+            
+            **Recommended Actions:**
+            - Check disk usage and I/O patterns
+            - Consider SSD upgrade
+            - Optimize database queries
+            - Monitor WAL activity
+        labels:
+          severity: warning
+          team: infrastructure
+        data:
+          - refId: A
             relativeTimeRange:
               from: 300
               to: 0
             datasourceUid: prometheus
             model:
-              expr: increase(pg_wal_size_bytes[5m])
-              intervalMs: 1000
-              maxDataPoints: 43200
+              expr: "rate(capsim_http_requests_total[5m]) > 50"
+              instant: false
+              range: true
               refId: A
-        noDataState: NoData
-        execErrState: NoData
-        for: 2m
+
+      - uid: wal-size-growth
+        title: "📝 WAL Size Growth"
+        condition: A
+        for: 1m
+        noDataState: OK
+        execErrState: Error
         annotations:
+          summary: "High WAL growth detected ({{ $values.A.Value | humanize1024 }}B in 5m)"
           description: |
             WAL size has grown by {{ $values.A.Value | humanize1024 }}B in the last 5 minutes.
             
@@ -110,72 +89,60 @@ groups:
             - Consider increasing checkpoint_timeout
             - Adjust wal_buffers if needed
             - Check for bulk operations
-          summary: High WAL growth detected ({{ $values.A.Value | humanize1024 }}B in 5m)
-          runbook_url: "https://docs.capsim.io/troubleshooting/wal-growth"
         labels:
-          severity: info
-          component: postgres
-          tuning_trigger: "true"
-        condition: A > 10000000  # 10MB in 5 minutes
-
-      - uid: simulation-overload
-        title: 🚀 Simulation Overload
-        condition: A
+          severity: warning
+          team: database
         data:
           - refId: A
-            queryType: ""
-            relativeTimeRange:
-              from: 60
-              to: 0
-            datasourceUid: prometheus
-            model:
-              expr: capsim_simulations_active
-              intervalMs: 1000
-              maxDataPoints: 43200
-              refId: A
-        noDataState: NoData
-        execErrState: Alerting
-        for: 0s
-        annotations:
-          description: |
-            **CRITICAL VIOLATION**: {{ $values.A.Value }} active simulations detected!
-            
-            CAPSIM MUST NOT run more than one simulation simultaneously.
-            
-            **IMMEDIATE ACTIONS REQUIRED:**
-            1. Check status: `python -m capsim status`
-            2. Stop excess simulations: `python -m capsim stop --force`
-            3. Check processes: `ps aux | grep capsim`
-            4. Verify database state
-            
-            This is a critical architectural constraint violation!
-          summary: Multiple active simulations detected ({{ $values.A.Value }})
-          runbook_url: "https://docs.capsim.io/troubleshooting/multiple-simulations"
-        labels:
-          severity: critical
-          component: simulation_engine
-          architectural_violation: "true"
-        condition: A > 1
-
-      - uid: http-request-rate-low
-        title: 📡 Low HTTP Request Rate
-        condition: A
-        data:
-          - refId: A
-            queryType: ""
             relativeTimeRange:
               from: 300
               to: 0
             datasourceUid: prometheus
             model:
-              expr: rate(capsim_http_requests_total[5m])
-              intervalMs: 1000
-              maxDataPoints: 43200
+              expr: "increase(capsim_events_table_inserts_total[5m]) > 1000"
+              instant: false
+              range: true
               refId: A
-        noDataState: NoData
-        execErrState: NoData
-        for: 5m
+
+      - uid: simulation-overload
+        title: "🚀 Simulation Overload"
+        condition: A
+        for: 30s
+        noDataState: OK
+        execErrState: Alerting
         annotations:
+          summary: "Simulation overload detected ({{ $values.A.Value }} active simulations)"
+          description: |
+            {{ $values.A.Value }} simulations are currently active, which may cause performance issues.
+            
+            **Recommended Actions:**
+            - Monitor system resources
+            - Consider scaling up
+            - Check for stuck simulations
+            - Review simulation parameters
+        labels:
+          severity: critical
+          team: development
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "capsim_simulations_active > 5"
+              instant: false
+              range: true
+              refId: A
+
+      - uid: http-request-rate-low
+        title: "📡 Low HTTP Request Rate"
+        condition: A
+        for: 2m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: "Low HTTP request rate detected ({{ $values.A.Value | humanizePercentage }} req/sec)"
           description: |
             HTTP request rate is {{ $values.A.Value | humanizePercentage }} req/sec, which is unusually low.
             
@@ -188,11 +155,20 @@ groups:
             - Application logs for errors
             - Database connection status
             - System resource utilization
-          summary: Low HTTP request rate detected ({{ $values.A.Value | humanizePercentage }} req/sec)
         labels:
           severity: info
-          component: application
-        condition: A < 0.1
+          team: development
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "rate(capsim_http_requests_total[5m]) < 1"
+              instant: false
+              range: true
+              refId: A
 
       - uid: memory-pressure
         title: 🧠 Memory Pressure
@@ -209,8 +185,8 @@ groups:
               intervalMs: 1000
               maxDataPoints: 43200
               refId: A
-        noDataState: NoData
-        execErrState: NoData
+        noDataState: OK
+        execErrState: Alerting
         for: 5m
         annotations:
           description: |
@@ -242,8 +218,8 @@ groups:
               intervalMs: 1000
               maxDataPoints: 43200
               refId: A
-        noDataState: NoData
-        execErrState: NoData
+        noDataState: OK
+        execErrState: Alerting
         for: 3m
         annotations:
           description: |

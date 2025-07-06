@@ -6,13 +6,13 @@ from capsim.db.repositories import DatabaseRepository
 async def run_6h_simulation():
     # Настройки для 6-часовой симуляции с 300 агентами
     os.environ['ENABLE_REALTIME'] = 'true'
-    os.environ['SIM_SPEED_FACTOR'] = '10'  # Скорость x10
+    os.environ['SIM_SPEED_FACTOR'] = '120'  # Скорость x120
     
     db_url = os.environ['DATABASE_URL']
     db_repo = DatabaseRepository(db_url)
     engine = SimulationEngine(db_repo)
     
-    print("Starting 6-hour simulation with 300 agents at 10x speed...")
+    print("Starting 6-hour simulation with 300 agents at 120x speed...")
     print("This will test trend chains hypothesis...")
     
     await engine.initialize(num_agents=300)

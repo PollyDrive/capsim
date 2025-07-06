@@ -1,5 +1,8 @@
 .PHONY: help dev-up dev-down test lint bootstrap clean docker-build
 
+include .env.local
+export
+
 # Default target
 help:
 	@echo "CAPSIM 2.0 - Agent-based Discrete Event Simulation"
@@ -162,9 +165,9 @@ check-health:
 monitor-db:
 	@echo "📊 Database monitoring..."
 	@echo "Active simulations:"
-	@psql postgresql://postgres:capsim321@localhost:5432/capsim_db -c "SELECT run_id, status, start_time, num_agents FROM capsim.simulation_runs ORDER BY start_time DESC LIMIT 5;" || echo "❌ Cannot connect to database"
+	@psql postgresql://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME) -c "SELECT run_id, status, start_time, num_agents FROM capsim.simulation_runs ORDER BY start_time DESC LIMIT 5;" || echo "❌ Cannot connect to database"
 	@echo "\nTotal agents:"
-	@psql postgresql://postgres:capsim321@localhost:5432/capsim_db -c "SELECT COUNT(*) as total_agents FROM capsim.persons;" || echo "❌ Cannot query agents"
+	@psql postgresql://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME) -c "SELECT COUNT(*) as total_agents FROM capsim.persons;" || echo "❌ Cannot query agents"
 
 clean-logs:
 	@echo "🧹 Cleaning Docker logs and system..."

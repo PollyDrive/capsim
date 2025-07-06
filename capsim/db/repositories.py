@@ -5,18 +5,20 @@ Database repositories for CAPSIM 2.0 - CRUD operations and batch processing.
 import json
 import logging
 from datetime import datetime, date
-from typing import List, Dict, Optional, Any, Set
-from uuid import UUID
+from typing import List, Dict, Optional, Any, Set, Tuple
+from uuid import UUID, uuid4
 
 from faker import Faker
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import select, insert, update, delete, text
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.pool import StaticPool
 
 from .models import (
-    SimulationRun, Person, Trend, Event, 
-    PersonAttributeHistory, AgentInterests, AffinityMap, DailyTrendSummary
+    SimulationRun, Person, SimulationParticipant, Trend, Event, 
+    PersonAttributeHistory, AgentInterests, AffinityMap, DailyTrendSummary,
+    TopicInterestMapping
 )
 
 logger = logging.getLogger(__name__)
@@ -86,6 +88,34 @@ def reset_names_session():
     """Сбрасывает счетчик уникальных имен для новой сессии."""
     global _used_names
     _used_names.clear()
+
+def convert_domain_person_to_db_model(domain_person: "Person") -> Person:
+    """
+    Конвертирует доменный объект Person в SQLAlchemy модель Person.
+    
+    Args:
+        domain_person: Доменный объект Person
+        
+    Returns:
+        SQLAlchemy модель Person
+    """
+    return Person(
+        id=domain_person.id,
+        profession=domain_person.profession,
+        first_name=domain_person.first_name,
+        last_name=domain_person.last_name,
+        gender=domain_person.gender,
+        date_of_birth=domain_person.date_of_birth,
+        financial_capability=domain_person.financial_capability,
+        trend_receptivity=domain_person.trend_receptivity,
+        social_status=domain_person.social_status,
+        energy_level=domain_person.energy_level,
+        time_budget=domain_person.time_budget,
+        exposure_history=domain_person.exposure_history,
+        interests=domain_person.interests,
+        created_at=domain_person.created_at,
+        updated_at=datetime.utcnow()
+    )
 
 class DatabaseRepository:
     """
@@ -198,58 +228,51 @@ class DatabaseRepository:
             return result.scalars().all()
             
     async def clear_future_events(self, simulation_id: UUID, 
-                                current_time: Optional[float] = None, 
                                 force: bool = False) -> int:
-        """
-        Clear future events from queue for graceful shutdown.
-        
-        Args:
-            simulation_id: Target simulation ID
-            current_time: Current simulation time (events after this will be cleared)
-            force: Force clear all events regardless of timestamp
-            
-        Returns:
-            Number of events cleared
-        """
+        """Clear future events for simulation."""
         async with self.SessionLocal() as session:
-            if force or current_time is None:
-                # Force mode: clear all events for simulation
-                stmt = delete(Event).where(Event.simulation_id == simulation_id)
-            else:
-                # Graceful mode: clear only future events
+            # Get current simulation time
+            if not force:
+                result = await session.execute(
+                    select(SimulationRun).where(SimulationRun.run_id == simulation_id)
+                )
+                simulation = result.scalar_one_or_none()
+                if not simulation:
+                    return 0
+                    
+                # Calculate current simulation time
+                current_time = (datetime.utcnow() - simulation.start_time).total_seconds() / 60
+                
+                # Delete future events
                 stmt = delete(Event).where(
                     Event.simulation_id == simulation_id,
                     Event.timestamp > current_time
                 )
+            else:
+                # Force delete all events
+                stmt = delete(Event).where(Event.simulation_id == simulation_id)
                 
             result = await session.execute(stmt)
-            cleared_count = result.rowcount
             await session.commit()
             
+            deleted_count = result.rowcount
             logger.info(json.dumps({
                 "event": "future_events_cleared",
                 "simulation_id": str(simulation_id),
-                "cleared_count": cleared_count,
-                "method": "force" if force else "graceful",
-                "current_time": current_time
+                "deleted_count": deleted_count,
+                "force": force
             }))
             
-            return cleared_count
+            return deleted_count
             
     async def force_complete_simulation(self, simulation_id: UUID) -> None:
-        """
-        Force complete all pending operations for simulation.
-        Used in emergency shutdown scenarios.
-        """
+        """Force complete simulation by updating status and end time."""
         async with self.SessionLocal() as session:
-            # Update simulation end time
-            current_time = datetime.utcnow()
-            
             stmt = update(SimulationRun).where(
                 SimulationRun.run_id == simulation_id
             ).values(
-                status="FORCE_STOPPED",
-                end_time=current_time
+                status="COMPLETED",
+                end_time=datetime.utcnow()
             )
             
             await session.execute(stmt)
@@ -257,161 +280,91 @@ class DatabaseRepository:
             
             logger.info(json.dumps({
                 "event": "simulation_force_completed",
-                "simulation_id": str(simulation_id),
-                "end_time": current_time.isoformat()
+                "simulation_id": str(simulation_id)
             }))
             
-    # Person operations  
-    async def create_person(self, person: Person) -> None:
-        """Create new person/agent."""
+    # Person operations (now global)
+    async def create_person(self, person: "Person") -> None:
+        """Create a new global person."""
         async with self.SessionLocal() as session:
-            session.add(person)
+            # Convert domain object to SQLAlchemy model if needed
+            if not hasattr(person, '_sa_instance_state'):
+                db_person = convert_domain_person_to_db_model(person)
+                session.add(db_person)
+            else:
+                session.add(person)
+            await session.commit()
+            
+    async def create_simulation_participant(self, simulation_id: UUID, person_id: UUID) -> None:
+        """Create a simulation participant record."""
+        async with self.SessionLocal() as session:
+            participant = SimulationParticipant(
+                simulation_id=simulation_id,
+                person_id=person_id
+            )
+            session.add(participant)
             await session.commit()
             
     async def create_person_attribute_history(self, history_record: "PersonAttributeHistory") -> None:
-        """Create new person attribute history record."""
+        """Create person attribute history record."""
         async with self.SessionLocal() as session:
             session.add(history_record)
             await session.commit()
             
-            logger.info(json.dumps({
-                "event": "person_attribute_history_created",
-                "person_id": str(history_record.person_id),
-                "reason": history_record.reason
-            }))
-            
     async def bulk_create_persons(self, persons: List["Person"]) -> None:
-        """Create multiple persons efficiently."""
-        if not persons:
-            return
-            
-        from ..db.models import Person as DBPerson
-        
-        # Сбрасываем счетчик уникальных имен для новой сессии
-        reset_names_session()
-        
-        db_persons = []
-        for person in persons:
-            import random
-            
-            current_year = datetime.now().year
-            birth_year = random.randint(current_year - 65, current_year - 18)
-            birth_date = date(birth_year, random.randint(1, 12), random.randint(1, 28))
-            
-            # ИСПРАВЛЕНО: Используем faker для генерации русских имен
-            try:
-                name_data = generate_russian_name()
-                first_name = name_data["first_name"]
-                last_name = name_data["last_name"]
-                gender = name_data["gender"]
-            except ValueError as e:
-                logger.error(f"Ошибка генерации имени: {e}")
-                # Fallback на простые имена если faker не сработал
-                gender = random.choice(["male", "female"])
-                if gender == "male":
-                    first_name, last_name = "Иван", "Иванов"
-                else:
-                    first_name, last_name = "Анна", "Иванова"
-            
-            db_person = DBPerson(
-                id=person.id,
-                simulation_id=person.simulation_id,
-                profession=person.profession,
-                first_name=first_name,
-                last_name=last_name,
-                gender=gender,
-                date_of_birth=birth_date,
-                financial_capability=person.financial_capability,
-                trend_receptivity=person.trend_receptivity,
-                social_status=person.social_status,
-                energy_level=person.energy_level,
-                time_budget=person.time_budget,
-                interests=person.interests,
-                exposure_history={},  # Пустая история в начале
-                # v1.8 fields
-                purchases_today=person.purchases_today,
-                last_post_ts=person.last_post_ts,
-                last_selfdev_ts=person.last_selfdev_ts,
-                last_purchase_ts=person.last_purchase_ts,
-                created_at=person.created_at
-            )
-            db_persons.append(db_person)
-            
+        """Bulk create persons (now global)."""
         async with self.SessionLocal() as session:
+            # Check if we're at the limit
+            count_result = await session.execute(select(Person))
+            current_count = len(count_result.scalars().all())
+            
+            if current_count + len(persons) > 1000:
+                raise ValueError(f"Cannot create {len(persons)} persons. Current: {current_count}, Limit: 1000")
+            
+            # Convert domain objects to SQLAlchemy models
+            db_persons = [convert_domain_person_to_db_model(person) for person in persons]
+            
+            # Bulk insert persons
             session.add_all(db_persons)
             await session.commit()
             
             logger.info(json.dumps({
-                "event": "bulk_persons_created", 
-                "count": len(db_persons),
-                "simulation_id": str(persons[0].simulation_id) if persons else None,
-                "unique_names_generated": len(_used_names)
+                "event": "persons_bulk_created",
+                "count": len(persons),
+                "total_persons": current_count + len(persons)
             }))
             
-    async def get_persons_count(self, simulation_id: UUID = None) -> int:
-        """Get total count of persons, optionally filtered by simulation."""
+    async def get_persons_count(self) -> int:
+        """Get total count of global persons."""
         async with self.ReadOnlySession() as session:
-            query = select(Person.id)
-            if simulation_id:
-                query = query.where(Person.simulation_id == simulation_id)
-            result = await session.execute(query)
+            result = await session.execute(select(Person))
             return len(result.scalars().all())
             
     async def get_persons_for_simulation(self, simulation_id: UUID, limit: int = 1000) -> List["Person"]:
-        """
-        Get persons for a simulation with limit, converting DB models to domain models.
-        
-        Args:
-            simulation_id: Simulation ID or None for global pool
-            limit: Maximum number of persons to return
-        """
-        from ..db.models import Person as DBPerson
-        from ..domain.person import Person as DomainPerson
-        
+        """Get persons participating in a simulation."""
         async with self.ReadOnlySession() as session:
-            if simulation_id is None:
-                # Глобальный пул агентов - берем случайных
-                result = await session.execute(
-                    select(DBPerson).order_by(text("RANDOM()")).limit(limit)
-                )
-            else:
-                # Агенты конкретной симуляции
-                result = await session.execute(
-                    select(DBPerson).where(DBPerson.simulation_id == simulation_id).limit(limit)
-                )
+            # Get participants for this simulation
+            result = await session.execute(
+                select(SimulationParticipant.person_id)
+                .where(SimulationParticipant.simulation_id == simulation_id)
+                .limit(limit)
+            )
+            participant_ids = result.scalars().all()
             
-            db_persons = result.scalars().all()
+            if not participant_ids:
+                return []
             
-            # Конвертируем модели БД в доменные модели
-            domain_persons = []
-            for db_person in db_persons:
-                domain_person = DomainPerson(
-                    id=db_person.id,
-                    profession=db_person.profession,
-                    financial_capability=db_person.financial_capability,
-                    trend_receptivity=db_person.trend_receptivity,
-                    social_status=db_person.social_status,
-                    energy_level=db_person.energy_level,
-                    time_budget=db_person.time_budget,
-                    interests=db_person.interests or {},
-                    exposure_history=db_person.exposure_history or {},
-                    # v1.8 fields
-                    purchases_today=getattr(db_person, 'purchases_today', 0),
-                    last_post_ts=getattr(db_person, 'last_post_ts', None),
-                    last_selfdev_ts=getattr(db_person, 'last_selfdev_ts', None),
-                    last_purchase_ts=getattr(db_person, 'last_purchase_ts', {}),
-                    simulation_id=db_person.simulation_id,
-                    created_at=db_person.created_at
-                )
-                domain_persons.append(domain_person)
-                
-            return domain_persons
+            # Get the actual person objects
+            result = await session.execute(
+                select(Person).where(Person.id.in_(participant_ids))
+            )
+            return result.scalars().all()
             
-    async def get_persons_by_simulation(self, simulation_id: UUID) -> List[Person]:
-        """Get all persons for a simulation."""
+    async def get_available_persons(self, limit: int = 1000) -> List["Person"]:
+        """Get available global persons for new simulations."""
         async with self.ReadOnlySession() as session:
             result = await session.execute(
-                select(Person).where(Person.simulation_id == simulation_id)
+                select(Person).limit(limit)
             )
             return result.scalars().all()
             
@@ -423,6 +376,40 @@ class DatabaseRepository:
             )
             return result.scalar_one_or_none()
             
+    # Simulation Participant operations
+    async def get_simulation_participant(self, simulation_id: UUID, person_id: UUID) -> Optional[SimulationParticipant]:
+        """Get simulation participant record."""
+        async with self.ReadOnlySession() as session:
+            result = await session.execute(
+                select(SimulationParticipant).where(
+                    SimulationParticipant.simulation_id == simulation_id,
+                    SimulationParticipant.person_id == person_id
+                )
+            )
+            return result.scalar_one_or_none()
+            
+    async def update_simulation_participant(self, simulation_id: UUID, person_id: UUID, 
+                                          updates: Dict[str, Any]) -> None:
+        """Update simulation participant attributes."""
+        async with self.SessionLocal() as session:
+            stmt = update(SimulationParticipant).where(
+                SimulationParticipant.simulation_id == simulation_id,
+                SimulationParticipant.person_id == person_id
+            ).values(**updates)
+            
+            await session.execute(stmt)
+            await session.commit()
+            
+    async def get_simulation_participants_count(self, simulation_id: UUID) -> int:
+        """Get count of participants in simulation."""
+        async with self.ReadOnlySession() as session:
+            result = await session.execute(
+                select(SimulationParticipant).where(
+                    SimulationParticipant.simulation_id == simulation_id
+                )
+            )
+            return len(result.scalars().all())
+            
     # Trend operations
     async def create_trend(self, trend: Trend) -> None:
         """Create new trend."""
@@ -431,131 +418,147 @@ class DatabaseRepository:
             await session.commit()
             
     async def get_active_trends(self, simulation_id: UUID) -> List[Trend]:
-        """Get active trends for simulation (created in last 3 days)."""
+        """Get active trends for simulation."""
         async with self.ReadOnlySession() as session:
-            # In production, use timestamp filtering
             result = await session.execute(
                 select(Trend).where(Trend.simulation_id == simulation_id)
             )
             return result.scalars().all()
             
     async def increment_trend_interactions(self, trend_id: UUID) -> None:
-        """Increment trend interaction count."""
+        """Increment trend interactions count."""
         async with self.SessionLocal() as session:
             stmt = update(Trend).where(
                 Trend.trend_id == trend_id
-            ).values(total_interactions=Trend.total_interactions + 1)
-            
+            ).values(
+                total_interactions=Trend.total_interactions + 1
+            )
             await session.execute(stmt)
             await session.commit()
             
-    # Event operations - events are always appended, never overwritten
+    # Event operations
     async def create_event(self, event: Event) -> None:
-        """Create new event - always appends to event log."""
+        """Create new event."""
         async with self.SessionLocal() as session:
             session.add(event)
             await session.commit()
             
     async def bulk_create_events(self, events: List[Event]) -> None:
-        """Bulk create events for better performance."""
-        if not events:
-            return
-            
+        """Bulk create events."""
         async with self.SessionLocal() as session:
             session.add_all(events)
             await session.commit()
             
             logger.info(json.dumps({
-                "event": "bulk_events_created",
-                "count": len(events),
-                "simulation_id": str(events[0].simulation_id) if events else None
+                "event": "events_bulk_created",
+                "count": len(events)
             }))
             
-    # Affinity Map operations  
+    # Affinity and interests operations
     async def load_affinity_map(self) -> Dict[str, Dict[str, float]]:
         """Load affinity map from database."""
         async with self.ReadOnlySession() as session:
-            result = await session.execute(
-                select(AffinityMap.profession, AffinityMap.topic, AffinityMap.affinity_score)
-            )
-            
+            result = await session.execute(select(AffinityMap))
             affinity_map = {}
-            for profession, topic, score in result:
-                if topic not in affinity_map:
-                    affinity_map[topic] = {}
-                affinity_map[topic][profession] = score
+            
+            for row in result.scalars().all():
+                if row.profession not in affinity_map:
+                    affinity_map[row.profession] = {}
+                affinity_map[row.profession][row.topic] = row.affinity_score
                 
             return affinity_map
             
     async def bulk_insert_affinity_map(self, affinity_data: Dict[str, Dict[str, float]]) -> None:
         """Bulk insert affinity map data."""
-        records = []
-        for topic, professions in affinity_data.items():
-            for profession, score in professions.items():
-                records.append({
-                    'profession': profession,
-                    'topic': topic,
-                    'affinity_score': score
-                })
-                
         async with self.SessionLocal() as session:
-            stmt = insert(AffinityMap)
-            await session.execute(stmt, records)
+            # Clear existing data
+            await session.execute(delete(AffinityMap))
+            
+            # Insert new data
+            for profession, topics in affinity_data.items():
+                for topic, score in topics.items():
+                    affinity = AffinityMap(
+                        profession=profession,
+                        topic=topic,
+                        affinity_score=score
+                    )
+                    session.add(affinity)
+                    
             await session.commit()
             
             logger.info(json.dumps({
                 "event": "affinity_map_loaded",
-                "records_count": len(records)
+                "professions": len(affinity_data),
+                "total_mappings": sum(len(topics) for topics in affinity_data.values())
             }))
             
-    # Agent Interests operations
     async def bulk_insert_agent_interests(self, interests_data: List[Dict]) -> None:
         """Bulk insert agent interests data."""
         async with self.SessionLocal() as session:
-            stmt = insert(AgentInterests)
-            await session.execute(stmt, interests_data)
+            # Clear existing data
+            await session.execute(delete(AgentInterests))
+            
+            # Insert new data
+            for interest in interests_data:
+                agent_interest = AgentInterests(**interest)
+                session.add(agent_interest)
+                
             await session.commit()
             
             logger.info(json.dumps({
-                "event": "agent_interests_loaded", 
-                "records_count": len(interests_data)
+                "event": "agent_interests_loaded",
+                "count": len(interests_data)
             }))
             
     async def get_agent_interests(self, profession: str) -> Dict[str, tuple]:
-        """Get interest ranges for profession."""
+        """Get agent interests for profession."""
         async with self.ReadOnlySession() as session:
             result = await session.execute(
                 select(AgentInterests).where(AgentInterests.profession == profession)
             )
             
             interests = {}
-            for record in result.scalars():
-                interests[record.interest_name] = (record.min_value, record.max_value)
+            for row in result.scalars().all():
+                interests[row.interest_name] = (row.min_value, row.max_value)
                 
             return interests
             
+    # Batch operations
     async def bulk_update_persons(self, updates: List[Dict[str, Any]]) -> None:
-        """Bulk update persons."""
-        if not updates:
-            return
-            
+        """Bulk update person attributes."""
         async with self.SessionLocal() as session:
-            stmt = update(Person)
-            await session.execute(stmt, updates)
+            for update_data in updates:
+                person_id = update_data.pop('id')
+                stmt = update(Person).where(Person.id == person_id).values(**update_data)
+                await session.execute(stmt)
+                
             await session.commit()
             
-            logger.info(json.dumps({
-                "event": "bulk_persons_updated",
-                "count": len(updates)
-            }))
-    
-    # Batch operations
+    async def bulk_update_simulation_participants(self, updates: List[Dict[str, Any]]) -> None:
+        """Bulk update simulation participant attributes."""
+        async with self.SessionLocal() as session:
+            for update_data in updates:
+                simulation_id = update_data.pop('simulation_id')
+                person_id = update_data.pop('person_id')
+                stmt = update(SimulationParticipant).where(
+                    SimulationParticipant.simulation_id == simulation_id,
+                    SimulationParticipant.person_id == person_id
+                ).values(**update_data)
+                await session.execute(stmt)
+                
+            await session.commit()
+            
     async def batch_commit_states(self, updates: List[Dict[str, Any]]) -> None:
         """
-        Batch commit agent state changes with retry logic.
+        Batch commit state updates with retry logic.
         
         Args:
-            updates: List of state change dictionaries
+            updates: List of update dictionaries with format:
+                {
+                    'table': 'persons' | 'simulation_participants',
+                    'id': UUID,  # person_id for persons, (simulation_id, person_id) for participants
+                    'updates': Dict[str, Any]  # fields to update
+                }
         """
         if not updates:
             return
@@ -563,34 +566,23 @@ class DatabaseRepository:
         for attempt in range(self._retry_attempts):
             try:
                 async with self.SessionLocal() as session:
-                    # Group updates by type for efficiency
-                    person_updates = []
-                    history_records = []
-                    
-                    for update in updates:
-                        if update['type'] == 'person_state':
-                            person_updates.append({
-                                'id': update['person_id'],
-                                **{k: v for k, v in update.items() 
-                                   if k not in ['type', 'person_id', 'reason', 'timestamp']}
-                            })
-                            
-                        elif update['type'] == 'attribute_history':
-                            history_records.append(update)
-                            
-                    # Bulk update persons
-                    if person_updates:
-                        await session.execute(
-                            update(Person),
-                            person_updates
-                        )
+                    for update_data in updates:
+                        table = update_data['table']
+                        record_id = update_data['id']
+                        fields = update_data['updates']
                         
-                    # Bulk insert history
-                    if history_records:
-                        await session.execute(
-                            insert(PersonAttributeHistory),
-                            history_records
-                        )
+                        if table == 'persons':
+                            stmt = update(Person).where(Person.id == record_id).values(**fields)
+                        elif table == 'simulation_participants':
+                            simulation_id, person_id = record_id
+                            stmt = update(SimulationParticipant).where(
+                                SimulationParticipant.simulation_id == simulation_id,
+                                SimulationParticipant.person_id == person_id
+                            ).values(**fields)
+                        else:
+                            raise ValueError(f"Unknown table: {table}")
+                            
+                        await session.execute(stmt)
                         
                     await session.commit()
                     
@@ -599,26 +591,22 @@ class DatabaseRepository:
                         "updates_count": len(updates),
                         "attempt": attempt + 1
                     }))
-                    
-                    return  # Success
+                    return
                     
             except SQLAlchemyError as e:
-                wait_time = self._retry_backoffs[min(attempt, len(self._retry_backoffs) - 1)]
-                
                 logger.warning(json.dumps({
                     "event": "batch_commit_retry",
                     "attempt": attempt + 1,
-                    "error": str(e),
-                    "wait_seconds": wait_time
+                    "error": str(e)
                 }))
                 
                 if attempt < self._retry_attempts - 1:
                     import asyncio
-                    await asyncio.sleep(wait_time)
+                    await asyncio.sleep(self._retry_backoffs[attempt])
                 else:
                     logger.error(json.dumps({
                         "event": "batch_commit_failed",
-                        "updates_lost": len(updates),
+                        "updates_count": len(updates),
                         "error": str(e)
                     }))
                     raise
@@ -628,7 +616,7 @@ class DatabaseRepository:
         self._batch_updates.append(update)
         
     async def flush_batch(self) -> None:
-        """Force flush current batch."""
+        """Flush current batch."""
         if self._batch_updates:
             await self.batch_commit_states(self._batch_updates)
             self._batch_updates.clear()
@@ -637,77 +625,53 @@ class DatabaseRepository:
         """Check if batch should be committed."""
         return len(self._batch_updates) >= self._batch_size
         
-    # Statistics and monitoring
+    # Statistics and queries
     async def get_simulation_stats(self, simulation_id: UUID) -> Dict[str, Any]:
-        """Get simulation statistics."""
+        """Get comprehensive simulation statistics."""
         async with self.ReadOnlySession() as session:
-            # Count persons
-            persons_result = await session.execute(
-                select(Person).where(Person.simulation_id == simulation_id)
+            # Get basic simulation info
+            simulation_result = await session.execute(
+                select(SimulationRun).where(SimulationRun.run_id == simulation_id)
             )
-            persons_count = len(persons_result.scalars().all())
+            simulation = simulation_result.scalar_one_or_none()
             
-            # Count trends
-            trends_result = await session.execute(
-                select(Trend).where(Trend.simulation_id == simulation_id)
+            if not simulation:
+                return {}
+                
+            # Get participant count
+            participants_result = await session.execute(
+                select(SimulationParticipant).where(
+                    SimulationParticipant.simulation_id == simulation_id
+                )
             )
-            trends_count = len(trends_result.scalars().all())
+            participants_count = len(participants_result.scalars().all())
             
-            # Count all events
+            # Get events count
             events_result = await session.execute(
                 select(Event).where(Event.simulation_id == simulation_id)
             )
             events_count = len(events_result.scalars().all())
             
-            # Count action events (PublishPost, Purchase, SelfDev)
-            action_events_result = await session.execute(
-                select(Event).where(
-                    Event.simulation_id == simulation_id,
-                    Event.event_type.in_(['PublishPostAction', 'PurchaseAction', 'SelfDevAction'])
-                )
+            # Get trends count
+            trends_result = await session.execute(
+                select(Trend).where(Trend.simulation_id == simulation_id)
             )
-            actions_count = len(action_events_result.scalars().all())
+            trends_count = len(trends_result.scalars().all())
             
             return {
-                "simulation_id": str(simulation_id),
-                "persons_count": persons_count,
-                "trends_count": trends_count,
-                "events_count": events_count,
-                "actions_count": actions_count
+                'simulation_id': str(simulation_id),
+                'status': simulation.status,
+                'num_agents': simulation.num_agents,
+                'participants_count': participants_count,
+                'events_count': events_count,
+                'trends_count': trends_count,
+                'start_time': simulation.start_time.isoformat() if simulation.start_time else None,
+                'end_time': simulation.end_time.isoformat() if simulation.end_time else None,
+                'duration_days': simulation.duration_days
             }
-
-    async def execute_query(self, query: str, params: tuple = None) -> List[Dict[str, Any]]:
-        """
-        Выполняет произвольный SQL запрос с параметрами.
-        
-        Args:
-            query: SQL запрос с placeholder'ами (%s)
-            params: Кортеж параметров для подстановки
             
-        Returns:
-            Список словарей с результатами запроса
-        """
+    async def execute_query(self, query: str, params: tuple = None) -> List[Dict[str, Any]]:
+        """Execute raw SQL query."""
         async with self.ReadOnlySession() as session:
-            try:
-                # Выполняем запрос
-                if params:
-                    result = await session.execute(text(query), params)
-                else:
-                    result = await session.execute(text(query))
-                
-                # Получаем все строки
-                rows = result.fetchall()
-                
-                # Преобразуем в список словарей
-                if rows:
-                    columns = result.keys()
-                    return [dict(zip(columns, row)) for row in rows]
-                else:
-                    return []
-                    
-            except SQLAlchemyError as e:
-                logger.error(f"Ошибка выполнения SQL запроса: {e}")
-                raise
-            except Exception as e:
-                logger.error(f"Неожиданная ошибка при выполнении запроса: {e}")
-                raise 
+            result = await session.execute(text(query), params or {})
+            return [dict(row._mapping) for row in result] 

@@ -520,7 +520,6 @@
           },
           "mappings": [],
           "thresholds": {
-            "mode": "absolute",
             "steps": [
               {
                 "color": "green",
@@ -528,14 +527,15 @@
               },
               {
                 "color": "yellow",
-                "value": 50
+                "value": 100
               },
               {
                 "color": "red",
-                "value": 100
+                "value": 500
               }
             ]
-          }
+          },
+          "unit": "short"
         },
         "overrides": []
       },
@@ -568,11 +568,11 @@
             "uid": "Postgres"
           },
           "format": "table",
-          "rawSql": "SELECT count(*) FROM capsim.events WHERE event_type IN ('PublishPostAction', 'PurchaseAction', 'SelfDevAction')",
+          "rawSql": "SELECT count(*) FROM capsim.events WHERE event_type = 'publish_post'",
           "refId": "A"
         }
       ],
-      "title": "Actions Count (v1.8)",
+      "title": "📝 Total Publications",
       "type": "stat"
     },
     {
@@ -587,7 +587,6 @@
           },
           "mappings": [],
           "thresholds": {
-            "mode": "absolute",
             "steps": [
               {
                 "color": "green",
@@ -595,22 +594,23 @@
               },
               {
                 "color": "yellow",
-                "value": 500
+                "value": 50
               },
               {
                 "color": "red",
-                "value": 1000
+                "value": 200
               }
             ]
-          }
+          },
+          "unit": "short"
         },
         "overrides": []
       },
       "gridPos": {
         "h": 4,
         "w": 6,
-        "x": 18,
-        "y": 12
+        "x": 0,
+        "y": 16
       },
       "id": 14,
       "options": {
@@ -635,11 +635,11 @@
             "uid": "Postgres"
           },
           "format": "table",
-          "rawSql": "SELECT COALESCE(SUM(purchases_today), 0) as total_purchases FROM capsim.persons",
+          "rawSql": "SELECT count(*) FROM capsim.events WHERE event_type = 'purchase'",
           "refId": "A"
         }
       ],
-      "title": "Total Purchases Today (v1.8)",
+      "title": "🛒 Total Purchases",
       "type": "stat"
     },
     {
@@ -654,7 +654,6 @@
           },
           "mappings": [],
           "thresholds": {
-            "mode": "absolute",
             "steps": [
               {
                 "color": "green",
@@ -662,22 +661,22 @@
               },
               {
                 "color": "yellow",
-                "value": 60
+                "value": 30
               },
               {
                 "color": "red",
-                "value": 120
+                "value": 100
               }
             ]
           },
-          "unit": "m"
+          "unit": "short"
         },
         "overrides": []
       },
       "gridPos": {
         "h": 4,
-        "w": 12,
-        "x": 0,
+        "w": 6,
+        "x": 6,
         "y": 16
       },
       "id": 15,
@@ -703,11 +702,11 @@
             "uid": "Postgres"
           },
           "format": "table",
-          "rawSql": "SELECT COALESCE(EXTRACT(EPOCH FROM (end_time - start_time))/60, EXTRACT(EPOCH FROM (NOW() - start_time))/60) as duration_minutes FROM capsim.simulation_runs ORDER BY start_time DESC LIMIT 1",
+          "rawSql": "SELECT count(*) FROM capsim.events WHERE event_type = 'self_dev'",
           "refId": "A"
         }
       ],
-      "title": "Latest Simulation Duration (minutes)",
+      "title": "📚 Total SelfDev",
       "type": "stat"
     },
     {
@@ -756,7 +755,7 @@
         "h": 7,
         "w": 11,
         "x": 12,
-        "y": 28
+        "y": 32
       },
       "id": 4,
       "options": {

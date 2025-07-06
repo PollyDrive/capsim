@@ -66,10 +66,10 @@
 ### 1. Проверка БД
 ```bash
 # Проверка количества событий
-psql postgresql://postgres:capsim321@localhost:5432/capsim_db -c "SELECT COUNT(*) FROM capsim.events;"
+psql postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME} -c "SELECT COUNT(*) FROM capsim.events;"
 
 # Последние события
-psql postgresql://postgres:capsim321@localhost:5432/capsim_db -c "SELECT event_type, simulation_id, processed_at FROM capsim.events ORDER BY processed_at DESC LIMIT 5;"
+psql postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME} -c "SELECT event_type, simulation_id, processed_at FROM capsim.events ORDER BY processed_at DESC LIMIT 5;"
 ```
 
 ### 2. Проверка API
@@ -83,7 +83,7 @@ curl http://localhost:8001/update-metrics
 
 ### 3. Запуск тестовой симуляции
 ```bash
-DATABASE_URL=postgresql+asyncpg://postgres:capsim321@localhost:5432/capsim_db \
+DATABASE_URL=postgresql+asyncpg://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME} \
 python -m capsim run --agents 3 --minutes 1 --speed 5.0
 ```
 

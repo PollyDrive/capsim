@@ -534,5 +534,22 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 **CAPSIM 2.0** - Production Ready Social Simulation Platform 🚀
 
+## Local environment setup
+
+1. Copy example env and edit secrets:
+
+```bash
+cp config/env.example .env.local
+nano .env.local  # или любой редактор
+```
+
+2. Запуск проекта:
+
+```bash
+make up  # поднимает docker-compose с сервисами
+```
+
+Все скрипты и код берут DSN из переменных окружения (`DATABASE_URL` / `DATABASE_ADMIN_URL` или компонентные `DB_*`).
+
 
 

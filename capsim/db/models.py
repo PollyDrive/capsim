@@ -25,17 +25,16 @@ class SimulationRun(Base):
     configuration = Column(JSON, nullable=True)
     
     # Relationships
-    persons = relationship("Person", back_populates="simulation_run")
+    participants = relationship("SimulationParticipant", back_populates="simulation_run")
     trends = relationship("Trend", back_populates="simulation_run")
     events = relationship("Event", back_populates="simulation_run")
 
 
 class Person(Base):
-    """Агенты симуляции с динамическими атрибутами."""
+    """Глобальные агенты симуляции с базовыми атрибутами."""
     __tablename__ = "persons"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    simulation_id = Column(UUID(as_uuid=True), ForeignKey("simulation_runs.run_id"), nullable=False)
     profession = Column(String(50), nullable=False)
     
     # Personal information (REQUIRED FIELDS)
@@ -55,20 +54,32 @@ class Person(Base):
     exposure_history = Column(JSON, default=dict)  # {trend_id: timestamp}
     interests = Column(JSON, default=dict)  # {interest_name: value}
     
-    # v1.8: Action tracking and cooldowns
-    purchases_today = Column(SmallInteger, default=0)  # Daily purchase counter
-    last_post_ts = Column(Double, nullable=True)  # Last post timestamp
-    last_selfdev_ts = Column(Double, nullable=True)  # Last self-development timestamp
-    last_purchase_ts = Column(JSONB, default=dict)  # {L1: timestamp, L2: timestamp, L3: timestamp}
-    
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationships
-    simulation_run = relationship("SimulationRun", back_populates="persons")
+    simulation_participations = relationship("SimulationParticipant", back_populates="person")
     attribute_history = relationship("PersonAttributeHistory", back_populates="person")
     originated_trends = relationship("Trend", foreign_keys="Trend.originator_id", back_populates="originator")
+
+
+class SimulationParticipant(Base):
+    """Участие агента в конкретной симуляции с симуляционно-специфичными атрибутами."""
+    __tablename__ = "simulation_participants"
+    
+    simulation_id = Column(UUID(as_uuid=True), ForeignKey("simulation_runs.run_id", ondelete="CASCADE"), primary_key=True)
+    person_id = Column(UUID(as_uuid=True), ForeignKey("persons.id", ondelete="CASCADE"), primary_key=True)
+    
+    # v1.8: Action tracking and cooldowns (simulation-specific)
+    purchases_today = Column(SmallInteger, default=0)  # Daily purchase counter
+    last_post_ts = Column(Double, nullable=True)  # Last post timestamp
+    last_selfdev_ts = Column(Double, nullable=True)  # Last self-development timestamp
+    last_purchase_ts = Column(JSONB, default=dict)  # {L1: timestamp, L2: timestamp, L3: timestamp}
+    
+    # Relationships
+    simulation_run = relationship("SimulationRun", back_populates="participants")
+    person = relationship("Person", back_populates="simulation_participations")
 
 
 class Trend(Base):
@@ -197,8 +208,6 @@ class DailyTrendSummary(Base):
     avg_virality_today = Column(Float, default=0.0)
     top_trend_id = Column(UUID(as_uuid=True), nullable=True)
     unique_authors_count = Column(Integer, default=0)
-    
-    # Change metrics
     pct_change_virality = Column(Float, nullable=True)  # Compared to previous day
     
     # Timestamps

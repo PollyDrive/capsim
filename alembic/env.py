@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 # Import our models for autogeneration
 from capsim.db.models import Base
+from capsim.common.db_config import SYNC_DSN
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -33,16 +34,8 @@ target_metadata = Base.metadata
 
 
 def get_url():
-    """Get database URL from environment variables."""
-    password = os.getenv("CAPSIM_RW_PASSWORD")
-    if not password:
-        raise ValueError("CAPSIM_RW_PASSWORD environment variable is required")
-    
-    db_name = os.getenv("POSTGRES_DB")
-    if not db_name:
-        raise ValueError("POSTGRES_DB environment variable is required")
-    
-    return f"postgresql+psycopg2://capsim_rw:{password}@postgres:5432/{db_name}"
+    """Return DB URL from env vars. Fallbacks are handled in db_config."""
+    return SYNC_DSN.replace("+asyncpg", "+psycopg2")  # Alembic needs sync driver
 
 
 def run_migrations_offline() -> None:
