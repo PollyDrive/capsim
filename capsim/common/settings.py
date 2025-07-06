@@ -3,7 +3,96 @@ Settings и configuration для CAPSIM симуляции.
 """
 
 import os
-from typing import Optional
+import yaml
+from typing import Optional, Dict, Any
+from pathlib import Path
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class ActionConfig:
+    """Configuration for v1.8 action system."""
+    
+    def __init__(self):
+        self.cooldowns = {}
+        self.limits = {}
+        self.effects = {}
+        self.shop_weights = {}
+        self._load_config()
+    
+    def _load_config(self):
+        """Load configuration from config/actions.yaml."""
+        config_path = Path(__file__).parent.parent.parent / "config" / "actions.yaml"
+        
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config_data = yaml.safe_load(f)
+                
+            self.cooldowns = config_data.get('COOLDOWNS', {})
+            self.limits = config_data.get('LIMITS', {})
+            self.effects = config_data.get('EFFECTS', {})
+            self.shop_weights = config_data.get('SHOP_WEIGHTS', {})
+            
+            logger.info(f"✅ ActionConfig loaded from {config_path}")
+            
+        except FileNotFoundError:
+            logger.warning(f"⚠️ Config file not found: {config_path}, using defaults")
+            self._load_defaults()
+        except Exception as e:
+            logger.error(f"❌ Error loading config: {e}, using defaults")
+            self._load_defaults()
+    
+    def _load_defaults(self):
+        """Load default configuration if file not found."""
+        self.cooldowns = {
+            "POST_MIN": 60,
+            "SELF_DEV_MIN": 30
+        }
+        self.limits = {
+            "MAX_PURCHASES_DAY": 5
+        }
+        self.effects = {
+            "POST": {
+                "time_budget": -0.20,
+                "energy_level": -0.50,
+                "social_status": 0.10
+            },
+            "SELF_DEV": {
+                "time_budget": -1.00,
+                "energy_level": 0.80
+            },
+            "PURCHASE": {
+                "L1": {
+                    "financial_capability": -0.05,
+                    "energy_level": 0.20
+                },
+                "L2": {
+                    "financial_capability": -0.50,
+                    "energy_level": -0.10,
+                    "social_status": 0.20
+                },
+                "L3": {
+                    "financial_capability": -2.00,
+                    "energy_level": -0.15,
+                    "social_status": 1.00
+                }
+            }
+        }
+        self.shop_weights = {
+            "Businessman": 1.20,
+            "Worker": 0.80,
+            "Developer": 1.00,
+            "Teacher": 0.90,
+            "Doctor": 1.00,
+            "Blogger": 1.05,
+            "Politician": 1.15,
+            "ShopClerk": 0.85,
+            "Artist": 0.75,
+            "SpiritualMentor": 0.80,
+            "Philosopher": 0.75,
+            "Unemployed": 0.60
+        }
 
 
 class Settings:
@@ -53,6 +142,10 @@ class Settings:
     # Docker integration
     DOCKER_ENV: bool = os.getenv("DOCKER_ENV", "false").lower() == "true"
     
+    # v1.8 Action cooldowns (can override YAML config)
+    POST_COOLDOWN_MIN: int = int(os.getenv("POST_COOLDOWN_MIN", "60"))
+    SELF_DEV_COOLDOWN_MIN: int = int(os.getenv("SELF_DEV_COOLDOWN_MIN", "30"))
+    
     @classmethod
     def get_batch_retry_backoffs(cls) -> list[float]:
         """Parse BATCH_RETRY_BACKOFFS as list of floats."""
@@ -75,6 +168,9 @@ class Settings:
 
 # Global settings instance
 settings = Settings()
+
+# Global action configuration instance
+action_config = ActionConfig()
 
 # Validate critical settings on import
 settings.validate_sim_speed_factor() 

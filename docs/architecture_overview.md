@@ -1,79 +1,124 @@
-# Architecture Overview - CAPSIM 2.0
+# CAPSIM 2.0 Architecture Overview
 
-## High-Level System Description
+## System Architecture
 
-CAPSIM 2.0 — это дискретно-событийная симуляция социальных взаимодействий между агентами различных профессий. Система моделирует распространение трендов через социальные сети с учетом влияния внешних факторов.
-
-## Core Components
-
-### SimulationEngine
-Центральный координатор всех операций симуляции:
-- Управляет приоритетной очередью событий (LAW=1, WEATHER=2, TREND=3, AGENT_ACTION=4, SYSTEM=5)
-- Координирует жизненный цикл симуляции
-- Обеспечивает batch-commit операции (100 изменений или 1 минута симуляции)
-
-### Person (Agents)
-Агенты с 12 типами профессий и динамическими атрибутами:
-- `energy_level` (0.0-5.0) - восстанавливается каждые 24 часа
-- `time_budget` (0-5) - зависит от профессии, сбрасывается ежедневно  
-- `trend_receptivity` (0.0-5.0) - готовность реагировать на тренды
-- `social_status` (0.0-5.0) - социальное влияние и авторитет
-
-### TrendProcessor
-Управление жизненным циклом трендов:
-- Создание трендов через PublishPostAction
-- Расчет виральности по формуле: `α×social_status + β×affinity + γ×energy`
-- Автоматическое архивирование неактивных трендов (3 дня без взаимодействий)
-
-### PersonInfluence
-Обработка социального влияния:
-- Фильтрация аудитории по coverage_level и affinity_map
-- Расчет изменений атрибутов агентов от воздействия трендов
-- Batch-обновление состояний через UpdateState пакеты
-
-## System Flow
+CAPSIM 2.0 использует event-driven архитектуру с четким разделением уровней:
 
 ```mermaid
 flowchart TD
-    UI[REST API] --> API[FastAPI Layer]
-    API --> Engine[SimulationEngine]
-    Engine --> Queue[Event Queue]
-    Queue --> Events[Event Processing]
-    Events --> Agents[Person Agents]
-    Events --> Trends[TrendProcessor]
-    Events --> Influence[PersonInfluence]
-    Agents --> DB[(PostgreSQL)]
-    Trends --> DB
-    Influence --> DB
-    DB --> Monitoring[Prometheus Metrics]
+    UI[Web UI] --> API[FastAPI REST API]
+    API --> Engine[Simulation Engine]
+    Engine --> DB[(PostgreSQL)]
+    Engine --> Actions[Action System v1.8]
+    Engine --> Events[Event Queue]
+    Actions --> Factory[Action Factory]
+    Events --> Priorities[Priority System]
+    
+    subgraph "Configuration"
+        ENV[Environment Variables]
+        YAML[actions.yaml]
+    end
+    
+    Actions --> YAML
+    Engine --> ENV
 ```
 
-## Event Processing Architecture
+## Core Components
 
-1. **Event Generation**: Агенты генерируют события согласно экспоненциальному распределению
-2. **Priority Queue**: События сортируются по приоритету и временным меткам
-3. **Processing**: SimulationEngine обрабатывает события согласно типу
-4. **State Updates**: Изменения агрегируются в batch для массового commit
-5. **Persistence**: Batch-commit в PostgreSQL каждые 100 операций или 1 минуту
+### 1. Simulation Engine
+- **Дискретно-событийная симуляция** (DES)
+- **Приоритетная очередь событий** с временными метками
+- **Batch-commit механизм** для производительности
+- **Realtime mode** с настраиваемой скоростью
 
-## Performance Characteristics
+### 2. Action System v1.8 (NEW)
+- **Action Factory Pattern** для создания действий агентов
+- **Унифицированная система эффектов** через YAML конфигурацию
+- **Cooldown система** для ограничения частоты действий
+- **Покупки L1/L2/L3** с финансовыми порогами
 
-- **Throughput**: до 43 событий на агента в день
-- **Latency**: P95 < 10ms для обработки событий  
-- **Queue Size**: максимум 5000 событий в очереди
-- **Batch Size**: 100 операций или 1 минута симулированного времени
-- **Scalability**: поддержка до 5000 агентов через горизонтальное масштабирование
+### 3. Agent System
+- **Персоны** с динамическими атрибутами
+- **Матрица интересов** 7x11 профессий vs тем
+- **Принятие решений** на основе weighted scoring
 
-## Data Persistence Strategy
+### 4. Event System
+- **Приоритеты v1.8**: SYSTEM (100), AGENT_ACTION (50), LOW (0)
+- **Системные события**: DailyReset, EnergyRecovery
+- **Агентские события**: Post, Purchase, SelfDev
 
-- **Партиционирование**: по `simulation_id` для events и person_attribute_history
-- **Индексы**: составные индексы на (simulation_id, timestamp)
-- **JSONB**: для хранения exposure_history и interests агентов
-- **Архивирование**: автоматическое архивирование неактивных трендов
+## Data Layer
+
+### Database Schema
+- **PostgreSQL 15** с схемой `capsim`
+- **JSONB** поля для гибкого хранения (interests, purchase_history)
+- **UUID** primary keys для масштабируемости
+- **Temporal tracking** для аудита изменений
+
+### New v1.8 Fields
+- `purchases_today SMALLINT` - дневной лимит покупок
+- `last_post_ts DOUBLE PRECISION` - timestamp последнего поста
+- `last_selfdev_ts DOUBLE PRECISION` - timestamp саморазвития
+- `last_purchase_ts JSONB` - история покупок по уровням
+
+## Configuration Management
+
+### Environment Variables (34 variables)
+- **Database**: DATABASE_URL, DATABASE_URL_RO
+- **Performance**: BATCH_SIZE, SIM_SPEED_FACTOR, CACHE_*
+- **v1.8 Actions**: POST_COOLDOWN_MIN, SELF_DEV_COOLDOWN_MIN
+- **Monitoring**: ENABLE_METRICS, LOG_LEVEL
+
+### YAML Configuration
+- **actions.yaml**: Эффекты действий, cooldowns, shop weights
+- **simulation.yaml**: Параметры профессий и атрибутов
+- **trend_affinity.json**: Матрица интересов 7x11
+
+## API Layer
+
+### REST Endpoints
+- `POST /api/v1/simulations` - создание симуляции
+- `GET /api/v1/simulations/{id}/status` - статус
+- `GET /api/v1/simulations/{id}/agents` - список агентов
+- `GET /api/v1/trends` - активные тренды
+
+### Health & Monitoring
+- `/healthz` - health check
+- `/metrics` - Prometheus метрики
+- **Real-time monitoring** через Grafana
 
 ## External Interfaces
 
 - **REST API**: создание/управление симуляциями, получение агентов и трендов
 - **Metrics**: `/metrics` endpoint для Prometheus
 - **Health Check**: `/healthz` endpoint для мониторинга состояния
-- **Configuration**: ENV переменные + YAML конфигурация 
+- **Configuration**: ENV переменные + YAML конфигурация + v1.8 Actions
+
+## v1.8 Architectural Changes
+
+### Action System Redesign
+1. **Centralized Configuration**: Все эффекты в `config/actions.yaml`
+2. **Factory Pattern**: Унифицированное создание действий
+3. **Shop Weights**: Профессиональные модификаторы покупок
+4. **Purchase Levels**: L1/L2/L3 с разными порогами и эффектами
+
+### Enhanced Event Priorities
+- **Simplified Priority System**: 3 уровня вместо 5
+- **SYSTEM Events**: Высший приоритет для системных операций
+- **AGENT_ACTION Events**: Средний приоритет для действий агентов
+
+### Performance Optimizations
+- **Cooldown Tracking**: Эффективная проверка временных ограничений
+- **JSONB Indexing**: GIN индексы для быстрого поиска покупок
+- **Batch Updates**: Групповые обновления состояния агентов
+
+## Technology Stack
+
+- **Python 3.11** - основной язык
+- **FastAPI** - веб-фреймворк
+- **SQLAlchemy 2.0** - ORM с async поддержкой
+- **PostgreSQL 15** - основная база данных
+- **Alembic** - миграции схемы
+- **Prometheus** - метрики и мониторинг
+- **Docker** - контейнеризация
+- **YAML** - конфигурационные файлы v1.8

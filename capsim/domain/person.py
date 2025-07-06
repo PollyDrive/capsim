@@ -45,6 +45,12 @@ class Person:
     exposure_history: Dict[str, datetime] = field(default_factory=dict)
     interests: Dict[str, float] = field(default_factory=dict)
     
+    # v1.8: Action tracking and cooldowns
+    purchases_today: int = 0  # Daily purchase counter
+    last_post_ts: Optional[float] = None  # Last post timestamp
+    last_selfdev_ts: Optional[float] = None  # Last self-development timestamp
+    last_purchase_ts: Dict[str, Optional[float]] = field(default_factory=dict)  # {L1: timestamp, L2: timestamp, L3: timestamp}
+    
     # Simulation metadata
     simulation_id: Optional[UUID] = None
     created_at: datetime = field(default_factory=datetime.utcnow)
@@ -113,7 +119,7 @@ class Person:
         """
         for attribute, delta in changes.items():
             if hasattr(self, attribute):
-                current_value = getattr(self, attribute)
+                current_value = float(getattr(self, attribute))  # Конвертируем Decimal в float
                 
                 # Применяем ограничения по диапазону
                 if attribute in ["energy_level", "financial_capability", 
@@ -121,7 +127,7 @@ class Person:
                     new_value = max(0.0, min(5.0, current_value + delta))
                 elif attribute == "time_budget":
                     # Унифицировано: float с округлением до 0.5
-                    raw_value = max(0.0, min(5.0, float(current_value + delta)))
+                    raw_value = max(0.0, min(5.0, current_value + delta))
                     new_value = float(round(raw_value * 2) / 2)  # Округление до 0.5, принудительно float
                 else:
                     new_value = current_value + delta
@@ -151,6 +157,73 @@ class Person:
             )
             
         return False
+    
+    def apply_effects(self, effects: Dict[str, float]) -> None:
+        """
+        Применяет эффекты действия к атрибутам агента.
+        
+        Args:
+            effects: Словарь эффектов {attribute: delta}
+        """
+        for attribute, delta in effects.items():
+            if hasattr(self, attribute):
+                current_value = float(getattr(self, attribute))  # Конвертируем Decimal в float
+                
+                # Применяем ограничения по диапазону
+                if attribute in ["energy_level", "financial_capability", 
+                               "trend_receptivity", "social_status"]:
+                    new_value = max(0.0, min(5.0, current_value + delta))
+                elif attribute == "time_budget":
+                    # Унифицировано: float с округлением до 0.5
+                    raw_value = max(0.0, min(5.0, current_value + delta))
+                    new_value = float(round(raw_value * 2) / 2)  # Округление до 0.5
+                else:
+                    new_value = current_value + delta
+                    
+                setattr(self, attribute, new_value)
+    
+    def can_post(self, current_time: float) -> bool:
+        """Проверяет возможность публикации поста (cooldown + ресурсы)."""
+        from capsim.common.settings import action_config
+        
+        # Проверка cooldown (сокращенный cooldown)
+        if self.last_post_ts is not None:
+            cooldown_passed = current_time - self.last_post_ts >= action_config.cooldowns["POST_MIN"] / 2  # Половина cooldown
+            if not cooldown_passed:
+                return False
+        
+        # Более мягкие проверки ресурсов
+        return (
+            self.energy_level >= 0.3 and  # Снижено с 0.5
+            self.time_budget >= 0.15 and  # Снижено для большей активности
+            self.trend_receptivity > 0
+        )
+    
+    def can_self_dev(self, current_time: float) -> bool:
+        """Проверяет возможность саморазвития (cooldown + ресурсы)."""
+        from capsim.common.settings import action_config
+        
+        # Проверка cooldown (сокращенный)
+        if self.last_selfdev_ts is not None:
+            cooldown_passed = current_time - self.last_selfdev_ts >= action_config.cooldowns["SELF_DEV_MIN"] / 2  # Половина cooldown
+            if not cooldown_passed:
+                return False
+        
+        # Более мягкие проверки ресурсов
+        return self.time_budget >= 0.8  # Снижено с 1.0
+    
+    def can_purchase(self, current_time: float, level: str) -> bool:
+        """Проверяет возможность покупки определенного уровня."""
+        from capsim.common.settings import action_config
+        
+        # Проверка дневного лимита (увеличенного)
+        max_purchases = action_config.limits["MAX_PURCHASES_DAY"] * 2  # Удваиваем лимит
+        if self.purchases_today >= max_purchases:
+            return False
+        
+        # Более мягкие финансовые требования
+        required_capability = abs(action_config.effects["PURCHASE"][level]["financial_capability"])
+        return self.financial_capability >= required_capability * 0.8  # 80% от требуемого
         
     def get_interest_in_topic(self, topic: str) -> float:
         """
@@ -371,3 +444,69 @@ class Person:
             time_budget=float(round(random.uniform(*ranges["time_budget"]) * 2) / 2),  # Округление до 0.5, принудительно float
             interests=base_interests
         ) 
+
+    def decide_action_v18(self, trend, current_time: float):
+        """
+        v1.8 алгоритм принятия решений с новыми действиями.
+        
+        Args:
+            trend: Текущий тренд
+            current_time: Текущее время симуляции
+            
+        Returns:
+            Объект Action или None
+        """
+        import random
+        from capsim.simulation.actions.factory import ACTION_FACTORY
+        
+        try:
+            from capsim.common.settings import action_config
+        except ImportError:
+            # Fallback если config недоступен
+            class FallbackConfig:
+                shop_weights = {"Developer": 1.0, "Teacher": 0.9, "Worker": 0.8}
+            action_config = FallbackConfig()
+        
+        actions = []
+        
+        # POST logic - более высокие базовые scores
+        if self.can_post(current_time):
+            if trend and hasattr(trend, 'calculate_current_virality'):
+                post_score = (
+                    trend.calculate_current_virality() * self.trend_receptivity / 15  # Уменьшено с 25 до 15
+                    * (1 + self.social_status / 8)  # Увеличено влияние social_status
+                )
+            else:
+                post_score = 0.5  # Увеличен минимальный score
+            actions.append(("Post", post_score))
+        
+        # PURCHASE logic (L1/L2/L3) - более активные покупки
+        for level in ["L1", "L2", "L3"]:
+            if self.can_purchase(current_time, level):
+                base_score = 0.6 * getattr(action_config, 'shop_weights', {}).get(self.profession, 1.0)  # Увеличено с 0.3
+                # Добавляем рандомность для разнообразия
+                base_score += random.random() * 0.3
+                if trend and hasattr(trend, 'topic') and trend.topic == "Economic":
+                    base_score *= 1.5  # Увеличено с 1.2
+                actions.append((f"Purchase_{level}", base_score))
+        
+        # SELF_DEV logic - больше мотивации для развития
+        if self.can_self_dev(current_time):
+            score = max(0.3, 1.2 - self.energy_level / 4)  # Увеличена минимальная мотивация
+            actions.append(("SelfDev", score))
+        
+        # Weighted selection
+        if not actions or not any(s for _, s in actions):
+            return None
+            
+        names = [n for n, _ in actions]
+        weights = [s for _, s in actions]
+        
+        # Если все веса нулевые, возвращаем None
+        if sum(weights) == 0:
+            return None
+            
+        selected = random.choices(names, weights=weights)[0]
+        
+        # Возвращаем имя действия как строку
+        return selected 

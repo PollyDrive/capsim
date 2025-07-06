@@ -665,7 +665,7 @@ class SimulationEngine:
         
     async def _schedule_agent_actions(self) -> int:
         """
-        Планирует новые действия СУЩЕСТВУЮЩИХ агентов на основе текущего состояния симуляции.
+        Планирует новые действия СУЩЕСТВУЮЩИХ агентов на основе v1.8 алгоритма принятия решений.
         
         ВАЖНО: НЕ создает новых агентов - только работает с уже созданными.
         Вызывается периодически для пополнения очереди событий.
@@ -673,6 +673,9 @@ class SimulationEngine:
         Returns:
             Количество запланированных действий
         """
+        from capsim.simulation.actions.factory import ACTION_FACTORY
+        import random
+        
         scheduled_count = 0
         context = SimulationContext(
             current_time=self.current_time,
@@ -690,56 +693,82 @@ class SimulationEngine:
             if agent.energy_level <= 0 or agent.time_budget <= 0:
                 continue
                 
-            # Проверяем ежедневный лимит действий
-            if not self._can_agent_act_today(agent.id):
-                continue
+            # Проверяем ежедневный лимит действий (снято в v1.8 - есть лимиты по типам)
+            # if not self._can_agent_act_today(agent.id):
+            #     continue
                 
-            # Проверяем кулдаун агента (минимум 30 минут между действиями)
+            # Проверяем кулдаун агента (снижено до 15 минут в v1.8)
             last_action_time = self._agent_action_cooldowns.get(agent.id, 0)
-            if self.current_time - last_action_time < 30.0:
+            if self.current_time - last_action_time < 15.0:
                 continue
                 
             eligible_agents.append(agent)
         
-        # Ограничиваем количество действий до 10% от доступных агентов за один вызов
-        import random
-        max_actions = max(1, min(len(eligible_agents), int(len(eligible_agents) * 0.1)))
+        # v1.8: Увеличиваем активность до 20% от доступных агентов
+        max_actions = max(1, min(len(eligible_agents), int(len(eligible_agents) * 0.2)))
         selected_agents = random.sample(eligible_agents, min(max_actions, len(eligible_agents)))
         
+        # Получаем текущий главный тренд для передачи в решения
+        current_trend = None
+        if self.active_trends:
+            # Берем тренд с наивысшей виральностью
+            current_trend = max(self.active_trends.values(), key=lambda t: t.calculate_current_virality())
+        
         for agent in selected_agents:
-            # Агент принимает решение
-            action_type = agent.decide_action(context)
-            if not action_type:
+            # v1.8: Используем новый алгоритм принятия решений
+            action_name = agent.decide_action_v18(current_trend, self.current_time)
+            if not action_name:
                 continue
                 
-            # Создать событие действия
-            if action_type == "PublishPostAction":
-                topic = agent._select_best_topic(context)
-                if topic:
-                    # Случайная задержка от 1 до 30 минут
-                    delay = random.uniform(1.0, 30.0)
-                    
-                    action_event = PublishPostAction(
-                        agent_id=agent.id,
-                        topic=topic,
-                        timestamp=self.current_time + delay
-                    )
-                    
-                    self.add_event(action_event, EventPriority.AGENT_ACTION, action_event.timestamp)
-                    self._track_agent_daily_action(agent.id)
-                    
-                    # Устанавливаем кулдаун для агента
-                    self._agent_action_cooldowns[agent.id] = self.current_time
-                    
-                    scheduled_count += 1
+            # Получаем action объект из фабрики
+            action_class = ACTION_FACTORY.get(action_name)
+            if not action_class:
+                logger.warning(json.dumps({
+                    "event": "unknown_action_type",
+                    "action_name": action_name,
+                    "agent_id": str(agent.id)
+                }))
+                continue
+                
+            # Создаем экземпляр действия
+            action = action_class()
+                
+            # Проверяем возможность выполнения
+            if not action.can_execute(agent, self.current_time):
+                continue
+                
+            # v1.8: Выполняем действие немедленно (не откладываем)
+            try:
+                action.execute(agent, self)
+                self._agent_action_cooldowns[agent.id] = self.current_time
+                scheduled_count += 1
+                
+                logger.debug(json.dumps({
+                    "event": "v18_action_executed",
+                    "agent_id": str(agent.id),
+                    "action_name": action_name,
+                    "profession": agent.profession,
+                    "timestamp": self.current_time,
+                    "energy_after": agent.energy_level,
+                    "purchases_today": getattr(agent, 'purchases_today', 0)
+                }, default=str))
+                
+            except Exception as e:
+                logger.error(json.dumps({
+                    "event": "action_execution_error",
+                    "agent_id": str(agent.id),
+                    "action_name": action_name,
+                    "error": str(e)
+                }, default=str))
         
         if scheduled_count > 0:
-            logger.debug(json.dumps({
-                "event": "agent_actions_scheduled",
+            logger.info(json.dumps({
+                "event": "v18_agent_actions_scheduled",
                 "eligible_agents": len(eligible_agents),
                 "selected_agents": len(selected_agents),
                 "scheduled_count": scheduled_count,
-                "timestamp": self.current_time
+                "timestamp": self.current_time,
+                "current_trend": str(current_trend.trend_id) if current_trend else None
             }, default=str))
         
         return scheduled_count

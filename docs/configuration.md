@@ -13,7 +13,11 @@
 - `BASE_RATE=43.2` - базовая частота событий на агента в день
 - `BATCH_SIZE=100` - размер batch для commit операций
 
-### **NEW: Realtime Mode Configuration**
+### **NEW: v1.8 Action Configuration**
+- `POST_COOLDOWN_MIN=60` - cooldown для публикации постов (минуты)
+- `SELF_DEV_COOLDOWN_MIN=30` - cooldown для саморазвития (минуты)
+
+### **Realtime Mode Configuration**
 - `SIM_SPEED_FACTOR=60` - коэффициент скорости симуляции
   - `1` = реальное время (1 сим-минута = 1 реальная минута)
   - `60` = ускорение в 60 раз (1 сим-минута = 1 реальная секунда) [DEFAULT]
@@ -37,24 +41,99 @@
 - `LOG_LEVEL=INFO` - уровень логирования
 - `ENABLE_JSON_LOGS=true` - JSON формат логов
 
+## YAML Configuration Files
+
+### Actions Configuration (v1.8)
+
+Файл `config/actions.yaml` содержит настройки для новой системы действий:
+
+```yaml
+COOLDOWNS:
+  POST_MIN: 60        # Минуты между публикациями постов
+  SELF_DEV_MIN: 30    # Минуты между действиями саморазвития
+
+LIMITS:
+  MAX_PURCHASES_DAY: 5  # Максимум покупок в день
+
+EFFECTS:
+  POST:
+    time_budget: -0.20      # Трата времени на пост
+    energy_level: -0.50     # Трата энергии на пост
+    social_status: 0.10     # Прирост социального статуса
+  SELF_DEV:
+    time_budget: -1.00      # Трата времени на саморазвитие
+    energy_level: 0.80      # Восстановление энергии
+  PURCHASE:
+    L1:                     # Покупки уровня L1 (threshold: 0.05)
+      financial_capability: -0.05
+      energy_level: 0.20
+    L2:                     # Покупки уровня L2 (threshold: 0.50)
+      financial_capability: -0.50
+      energy_level: -0.10
+      social_status: 0.20
+    L3:                     # Покупки уровня L3 (threshold: 2.00)
+      financial_capability: -2.00
+      energy_level: -0.15
+      social_status: 1.00
+
+SHOP_WEIGHTS:             # Склонность профессий к покупкам
+  Businessman: 1.20
+  Worker: 0.80
+  Developer: 1.00
+  Teacher: 0.90
+  Doctor: 1.00
+  Blogger: 1.05
+  Politician: 1.15
+  ShopClerk: 0.85
+  Artist: 0.75
+  SpiritualMentor: 0.80
+  Philosopher: 0.75
+  Unemployed: 0.60
+```
+
+**Важные особенности:**
+- ENV переменные `POST_COOLDOWN_MIN` и `SELF_DEV_COOLDOWN_MIN` переопределяют значения из YAML
+- L1/L2/L3 представляют "цену" покупки - L3 доступна только при financial_capability >= 4.5
+- SHOP_WEIGHTS влияют на вероятность покупок независимо от темы тренда
+
 ## Usage Examples
 
-### Fast Simulation (Legacy Mode)
+### Basic Setup
 ```bash
-export SIM_SPEED_FACTOR=60  # или не устанавливать (default)
-python -m capsim.cli run --minutes 1440  # завершится за ~2 минуты
+# Копирование конфига
+cp .env.example .env
+
+# Основные настройки
+export DATABASE_URL="postgresql+asyncpg://user:pass@localhost:5432/capsim"
+export SIM_SPEED_FACTOR=60
+export ENABLE_METRICS=true
 ```
 
-### Real-time Simulation  
-```bash
-export SIM_SPEED_FACTOR=1
-python -m capsim.cli run --minutes 120  # займет ровно 2 часа
+### Action System v1.8
+```python
+from capsim.common.settings import action_config
+
+# Получение cooldown
+post_cooldown = action_config.cooldowns.get('POST_MIN', 60)
+
+# Получение shop weight
+weight = action_config.shop_weights.get('Developer', 1.0)
+
+# Получение эффектов покупки
+l1_effects = action_config.effects['PURCHASE']['L1']
 ```
 
-### Demo Mode (10x acceleration)
-```bash
-export SIM_SPEED_FACTOR=10  
-python -m capsim.cli run --minutes 60  # займет 6 минут
+### Performance Tuning
+```env
+# Высокая производительность
+BATCH_SIZE=200
+SIM_SPEED_FACTOR=120
+CACHE_MAX_SIZE=20000
+
+# Отладка
+SIM_SPEED_FACTOR=1
+LOG_LEVEL=DEBUG
+ENABLE_JSON_LOGS=false
 ```
 
 ## Performance Considerations

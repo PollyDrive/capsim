@@ -2,8 +2,8 @@
 Database models for CAPSIM 2.0 using SQLAlchemy 2.0.
 """
 
-from sqlalchemy import Column, Integer, String, Float, DateTime, Date, Text, ForeignKey, BOOLEAN, JSON, MetaData, Numeric
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Column, Integer, String, Float, DateTime, Date, Text, ForeignKey, BOOLEAN, JSON, MetaData, Numeric, SmallInteger, Double
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -54,6 +54,12 @@ class Person(Base):
     time_budget = Column(Numeric(2, 1), default=2.5)  # 0.0-5.0 with 0.5 step
     exposure_history = Column(JSON, default=dict)  # {trend_id: timestamp}
     interests = Column(JSON, default=dict)  # {interest_name: value}
+    
+    # v1.8: Action tracking and cooldowns
+    purchases_today = Column(SmallInteger, default=0)  # Daily purchase counter
+    last_post_ts = Column(Double, nullable=True)  # Last post timestamp
+    last_selfdev_ts = Column(Double, nullable=True)  # Last self-development timestamp
+    last_purchase_ts = Column(JSONB, default=dict)  # {L1: timestamp, L2: timestamp, L3: timestamp}
     
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
