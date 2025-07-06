@@ -1,0 +1,48 @@
+# Performance Tuning Baseline
+# Generated on: {{ timestamp }}
+# System: M1 Air with Docker Postgres
+
+baseline:
+  timestamp: "{{ timestamp }}"
+  system_info:
+    cpu: "M1 Air"
+    postgres_version: "15"
+    environment: "Docker"
+  
+  metrics:
+    wal_write_rate:
+      query: "rate(pg_wal_lsn_bytes_total[5m])"
+      value_bytes_per_sec: 0
+      peak_bytes_per_sec: 0
+      unit: "bytes/sec"
+    
+    disk_io_latency:
+      query: "avg(node_disk_io_time_seconds_total)"
+      value_seconds: 0
+      unit: "seconds"
+    
+    io_wait_percentage:
+      query: "avg(rate(node_cpu_seconds_total{mode=\"iowait\"}[2m]))"
+      value_percent: 0
+      unit: "percent"
+    
+    cpu_temperature:
+      query: "max(macos_cpu_temperature_celsius)"
+      value_celsius: 0
+      max_safe_celsius: 85
+      unit: "celsius"
+    
+    throttle_count:
+      query: "macos_throttle_count_total"
+      value: 0
+      unit: "count"
+
+  sla_targets:
+    cpu_temp_max: 85          # °C (5 min avg)
+    io_wait_max: 25           # % (5 min avg)
+    p95_write_latency_max: 200 # ms
+    wal_rate_multiplier: 1.5   # × baseline peak
+
+  notes: |
+    This file stores baseline performance metrics for iterative tuning.
+    Update this file after each tuning cycle to track progress. 

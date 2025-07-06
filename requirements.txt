@@ -11,4 +11,9 @@ pyyaml==6.0.1
 python-dotenv==1.0.0
 faker==37.4.0
 structlog==23.2.0
-psutil==5.9.6 
+psutil==5.9.6
+# Performance tuning dependencies
+requests==2.31.0
+# Browser push notification server dependencies
+flask==3.0.0
+flask-cors==4.0.0 

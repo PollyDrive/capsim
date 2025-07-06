@@ -24,6 +24,13 @@ help:
 	@echo "  metrics        Show current metrics"
 	@echo "  compose-logs   Show docker-compose logs"
 	@echo ""
+	@echo "🔧 Performance Tuning:"
+	@echo "  setup-macos-monitoring  Set up macOS-specific monitoring"
+	@echo "  performance-baseline    Establish performance baseline"
+	@echo "  performance-tuning      Run automated tuning loop"
+	@echo "  performance-status      Check current performance metrics"
+	@echo "  performance-help        Show performance tuning help"
+	@echo ""
 	@echo "🧹 Maintenance:"
 	@echo "  clean          Clean up containers and volumes"
 	@echo "  clean-logs     Clean Docker logs and system"
@@ -173,6 +180,103 @@ grafana-reload:
 	docker-compose restart grafana
 	@sleep 10
 	@echo "✅ Grafana reloaded"
+
+# Performance Tuning Targets
+setup-macos-monitoring:
+	@echo "🚀 Setting up macOS monitoring for performance tuning..."
+	./scripts/setup_macos_exporter.sh
+
+performance-baseline:
+	@echo "📊 Establishing performance baseline..."
+	python3 scripts/performance_tuning.py
+
+performance-tuning:
+	@echo "🔧 Starting automated performance tuning..."
+	./scripts/run_tuning_loop.sh
+
+performance-status:
+	@./scripts/check_performance_status.sh
+
+performance-help:
+	@echo "🛠️  Performance Tuning Commands:"
+	@echo "  make setup-macos-monitoring  - Set up macOS-specific monitoring"
+	@echo "  make performance-baseline    - Establish performance baseline"
+	@echo "  make performance-tuning      - Run automated tuning loop"
+	@echo "  make performance-status      - Check current performance metrics"
+	@echo "  make performance-help        - Show this help"
+	@echo ""
+	@echo "📊 View results:"
+	@echo "  Prometheus: http://localhost:9091"
+	@echo "  Grafana: http://localhost:3000"
+	@echo "  cAdvisor: http://localhost:8080"
+	@echo ""
+	@echo "📋 Files to check:"
+	@echo "  baseline.yaml         - Performance baseline"
+	@echo "  config/levers.yaml    - Tuning parameters"
+	@echo "  CHANGELOG_TUNING.md   - Tuning history"
+	@echo "  tuning.log           - Detailed tuning logs"
+
+# Grafana Alerting & Browser Push Notifications
+start-browser-push:  ## Start browser push notification server
+	@echo "🚀 Starting browser push notification server..."
+	@python3 scripts/browser_push_server.py --port 8001 &
+	@echo "✅ Browser push server started on http://localhost:8001"
+
+stop-browser-push:  ## Stop browser push notification server
+	@echo "🛑 Stopping browser push notification server..."
+	@pkill -f "browser_push_server.py" || true
+	@echo "✅ Browser push server stopped"
+
+restart-browser-push:  ## Restart browser push notification server
+	@$(MAKE) stop-browser-push
+	@sleep 2
+	@$(MAKE) start-browser-push
+
+test-browser-push:  ## Test browser push notification endpoint
+	@echo "📱 Testing browser push notification..."
+	@curl -X POST http://localhost:8001/api/notifications/browser-push \
+		-H "Content-Type: application/json" \
+		-d '{"title": "🧪 Test Alert", "body": "This is a test notification", "data": {"severity": "info", "dashboard_url": "http://localhost:3000/d/performance-tuning"}}' \
+		|| echo "❌ Browser push server not running"
+
+open-alerts-dashboard:  ## Open browser alerts dashboard
+	@echo "🖥️  Opening alerts dashboard..."
+	@open http://localhost:8001 || echo "❌ Cannot open browser (run 'make start-browser-push' first)"
+
+setup-grafana-alerting:  ## Configure Grafana alerting (requires email setup)
+	@echo "📧 Setting up Grafana alerting..."
+	@echo "📝 Please update your .env file with:"
+	@echo "   - your-email@gmail.com (replace with your actual email)"
+	@echo "   - your-app-password (generate in Gmail security settings)"
+	@echo "🔄 Restart Grafana after updating .env: make restart-grafana"
+
+restart-grafana:  ## Restart Grafana service
+	@echo "🔄 Restarting Grafana..."
+	@docker-compose restart grafana
+	@echo "✅ Grafana restarted"
+
+check-grafana-alerts:  ## Check Grafana alert rules status
+	@echo "🔍 Checking Grafana alert rules..."
+	@curl -s -u admin:$$GRAFANA_PASSWORD http://localhost:3000/api/v1/provisioning/alert-rules | jq -r '.[] | "\(.title): \(.condition)"' || echo "❌ Cannot connect to Grafana"
+
+grafana-alerting-help:  ## Show Grafana alerting help
+	@echo "📧 Grafana Alerting & Browser Push Help:"
+	@echo "  make setup-grafana-alerting  - Configure email alerting"
+	@echo "  make restart-grafana         - Restart Grafana service"
+	@echo "  make check-grafana-alerts    - Check alert rules status"
+	@echo "  make start-browser-push      - Start browser notification server"
+	@echo "  make test-browser-push       - Test browser notifications"
+	@echo "  make open-alerts-dashboard   - Open alerts dashboard"
+	@echo ""
+	@echo "📊 Dashboard URLs:"
+	@echo "  Performance Tuning: http://localhost:3000/d/performance-tuning"
+	@echo "  Browser Alerts: http://localhost:8001"
+	@echo ""
+	@echo "📧 Email Setup:"
+	@echo "  1. Enable 2FA in Gmail"
+	@echo "  2. Generate App Password in Gmail Security settings"
+	@echo "  3. Update .env with your email and app password"
+	@echo "  4. Run 'make restart-grafana'"
 
 # Security commands
 setup-env:

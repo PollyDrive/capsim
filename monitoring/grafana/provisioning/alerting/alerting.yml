@@ -1,0 +1,46 @@
+apiVersion: 1
+
+# Настройки провайдинга для Grafana Alerting
+# Этот файл определяет источники конфигурации для alert rules, contact points и policies
+
+ruleProviders:
+  - name: 'Performance Tuning Rules'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/provisioning/alerting/rules.yml
+
+contactPointProviders:
+  - name: 'Performance Contact Points'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/provisioning/alerting/contactpoints.yml
+
+policyProviders:
+  - name: 'Performance Notification Policies'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/provisioning/alerting/notification-policies.yml
+
+# Глобальные настройки для alerting
+settings:
+  # Включаем unified alerting
+  unified_alerting:
+    enabled: true
+    
+  # Настройки для внешних alertmanager-ов (если нужно)
+  external_alertmanagers:
+    enabled: false
+    
+  # Настройки для выполнения алертов
+  execution:
+    # Максимальное время выполнения запроса алерта
+    max_attempts: 3
+    
+    # Минимальный интервал между оценками
+    min_interval: 10s 

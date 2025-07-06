@@ -1,0 +1,150 @@
+# Performance Tuning Levers
+# Categorized by implementation cost and target symptoms
+
+levers:
+  # LOW COST - Quick config changes
+  low_cost:
+    - name: "checkpoint_timeout"
+      description: "Reduce checkpoint frequency"
+      target_symptom: "frequent_checkpoints"
+      config_file: "monitoring/postgresql.conf"
+      parameter: "checkpoint_timeout"
+      default_value: "5min"
+      recommended_values: ["10min", "15min", "20min"]
+      expected_impact: "Lower WAL spikes, reduced IO"
+      rollback_risk: "low"
+      
+    - name: "checkpoint_completion_target"
+      description: "Spread checkpoint IO over time"
+      target_symptom: "checkpoint_spikes"
+      config_file: "monitoring/postgresql.conf"
+      parameter: "checkpoint_completion_target"
+      default_value: "0.5"
+      recommended_values: ["0.7", "0.8", "0.9"]
+      expected_impact: "Smoother IO patterns"
+      rollback_risk: "low"
+      
+    - name: "wal_buffers"
+      description: "Increase WAL buffer size"
+      target_symptom: "wal_contention"
+      config_file: "monitoring/postgresql.conf"
+      parameter: "wal_buffers"
+      default_value: "16MB"
+      recommended_values: ["32MB", "64MB", "128MB"]
+      expected_impact: "Better WAL write performance"
+      rollback_risk: "low"
+      
+    - name: "batch_size"
+      description: "Increase application batch size"
+      target_symptom: "high_transaction_rate"
+      config_file: ".env"
+      parameter: "BATCH_SIZE"
+      default_value: "100"
+      recommended_values: ["200", "500", "1000"]
+      expected_impact: "Fewer transactions, lower WAL rate"
+      rollback_risk: "low"
+
+  # MEDIUM COST - Requires restart or code changes
+  medium_cost:
+    - name: "shared_buffers"
+      description: "Increase shared buffer cache"
+      target_symptom: "high_disk_io"
+      config_file: "monitoring/postgresql.conf"
+      parameter: "shared_buffers"
+      default_value: "128MB"
+      recommended_values: ["256MB", "512MB", "1GB"]
+      expected_impact: "Better cache hit ratio"
+      rollback_risk: "medium"
+      requires_restart: true
+      
+    - name: "effective_cache_size"
+      description: "Tell PG about available OS cache"
+      target_symptom: "poor_query_plans"
+      config_file: "monitoring/postgresql.conf"
+      parameter: "effective_cache_size"
+      default_value: "4GB"
+      recommended_values: ["6GB", "8GB", "12GB"]
+      expected_impact: "Better query planning"
+      rollback_risk: "low"
+      
+    - name: "work_mem"
+      description: "Increase sort/hash memory"
+      target_symptom: "disk_sorts"
+      config_file: "monitoring/postgresql.conf"
+      parameter: "work_mem"
+      default_value: "4MB"
+      recommended_values: ["8MB", "16MB", "32MB"]
+      expected_impact: "In-memory operations"
+      rollback_risk: "medium"
+      
+    - name: "maintenance_work_mem"
+      description: "Increase maintenance operation memory"
+      target_symptom: "slow_maintenance"
+      config_file: "monitoring/postgresql.conf"
+      parameter: "maintenance_work_mem"
+      default_value: "64MB"
+      recommended_values: ["128MB", "256MB", "512MB"]
+      expected_impact: "Faster VACUUM/CREATE INDEX"
+      rollback_risk: "low"
+
+  # HIGH COST - Infrastructure changes
+  high_cost:
+    - name: "docker_memory_limit"
+      description: "Increase container memory limit"
+      target_symptom: "memory_pressure"
+      config_file: "docker-compose.yml"
+      parameter: "mem_limit"
+      default_value: "1g"
+      recommended_values: ["2g", "4g", "8g"]
+      expected_impact: "More memory for buffers"
+      rollback_risk: "high"
+      requires_restart: true
+      
+    - name: "docker_cpu_limit"
+      description: "Increase container CPU limit"
+      target_symptom: "cpu_throttling"
+      config_file: "docker-compose.yml"
+      parameter: "cpus"
+      default_value: "0.75"
+      recommended_values: ["1.0", "1.5", "2.0"]
+      expected_impact: "Better CPU availability"
+      rollback_risk: "high"
+      requires_restart: true
+      
+    - name: "connection_pooling"
+      description: "Implement connection pooling"
+      target_symptom: "connection_overhead"
+      config_file: "code"
+      parameter: "DATABASE_URL"
+      default_value: "direct"
+      recommended_values: ["pgbouncer", "asyncpg_pool"]
+      expected_impact: "Lower connection overhead"
+      rollback_risk: "high"
+      requires_code_change: true
+
+# Symptom to lever mapping
+symptom_mappings:
+  high_wal_rate:
+    - "checkpoint_timeout"
+    - "batch_size"
+    - "wal_buffers"
+    
+  high_io_wait:
+    - "checkpoint_completion_target"
+    - "shared_buffers"
+    - "effective_cache_size"
+    
+  high_cpu_temp:
+    - "docker_cpu_limit"
+    - "work_mem"
+    - "batch_size"
+    
+  high_disk_latency:
+    - "shared_buffers"
+    - "checkpoint_completion_target"
+    - "work_mem"
+    
+  checkpoint_spikes:
+    - "checkpoint_timeout"
+    - "checkpoint_completion_target"
+    - "wal_buffers" 

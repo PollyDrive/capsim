@@ -198,6 +198,80 @@ groups:
             
             Проверить:
             - Статус контейнера: docker ps | grep capsim
+
+  - name: performance_tuning_alerts
+    rules:
+      - alert: CpuTemperatureHigh
+        expr: max(macos_cpu_temperature_celsius) > 85
+        for: 5m
+        labels:
+          severity: warning
+          component: system
+          tuning_trigger: true
+        annotations:
+          summary: "High CPU temperature: {{ $value }}°C"
+          description: |
+            CPU temperature is {{ $value }}°C, exceeding 85°C threshold.
+            This may cause thermal throttling and performance degradation.
+            
+            Consider:
+            - Reducing workload intensity
+            - Increasing docker CPU limits
+            - Improving system cooling
+            
+      - alert: HighIOWait
+        expr: avg(rate(node_cpu_seconds_total{mode="iowait"}[2m])) * 100 > 25
+        for: 5m
+        labels:
+          severity: warning
+          component: system
+          tuning_trigger: true
+        annotations:
+          summary: "High IO wait: {{ $value }}%"
+          description: |
+            IO wait percentage is {{ $value }}%, exceeding 25% threshold.
+            System is spending too much time waiting for disk operations.
+            
+            Consider:
+            - Increasing shared_buffers
+            - Adjusting checkpoint_completion_target
+            - Optimizing disk usage patterns
+            
+      - alert: WalSpikes
+        expr: rate(pg_wal_lsn_bytes_total[5m]) > (1.5 * on() group_left() label_replace(pg_wal_lsn_bytes_total offset 1h, "baseline", "$1", "instance", "(.*)"))
+        for: 3m
+        labels:
+          severity: warning
+          component: postgres
+          tuning_trigger: true
+        annotations:
+          summary: "WAL write rate spike: {{ $value }} bytes/sec"
+          description: |
+            WAL write rate is {{ $value }} bytes/sec, exceeding 1.5x baseline.
+            This indicates increased database write activity.
+            
+            Consider:
+            - Increasing checkpoint_timeout
+            - Adjusting wal_buffers
+            - Optimizing batch sizes
+            
+      - alert: P95WriteLatencyHigh
+        expr: histogram_quantile(0.95, rate(capsim_event_latency_ms_bucket[5m])) > 200
+        for: 3m
+        labels:
+          severity: warning
+          component: application
+          tuning_trigger: true
+        annotations:
+          summary: "High p95 write latency: {{ $value }}ms"
+          description: |
+            P95 write latency is {{ $value }}ms, exceeding 200ms threshold.
+            Database write operations are taking too long.
+            
+            Consider:
+            - Increasing work_mem
+            - Optimizing queries
+            - Adjusting shared_buffers
             - Логи: docker logs capsim-app-1
             - Healthcheck: curl localhost:8000/healthz
             
