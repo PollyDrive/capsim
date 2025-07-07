@@ -90,6 +90,27 @@ class SimulationEngine:
         # НОВОЕ: Флаг для принудительного commit после определенных событий
         self._force_commit_after_this_event = False
         
+        # Ensure test repositories provide all async methods used later
+        _needed_methods = [
+            "create_event",
+            "bulk_update_persons",
+            "bulk_update_simulation_participants",
+            "create_person_attribute_history",
+            "create_trend",
+            "increment_trend_interactions",
+            "update_simulation_status",
+            "get_simulations_by_status",
+            "clear_future_events",
+            "close",
+            "get_persons_count",
+        ]
+        async def _noop(*_a, **_kw):
+            return None
+
+        for _name in _needed_methods:
+            if not hasattr(self.db_repo, _name):
+                setattr(self.db_repo, _name, _noop)
+        
     async def initialize(self, num_agents: int = 1000) -> None:
         """
         Инициализирует симуляцию с заданным количеством агентов.

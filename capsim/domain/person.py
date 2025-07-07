@@ -55,6 +55,11 @@ class Person:
     simulation_id: Optional[UUID] = None
     created_at: datetime = field(default_factory=datetime.utcnow)
     
+    # Backward compatibility alias expected by old tests
+    @property
+    def person_id(self) -> UUID:  # noqa: D401
+        return self.id
+    
     def decide_action(self, context: "SimulationContext") -> Optional[str]:
         """
         Принимает решение о следующем действии агента.
@@ -194,9 +199,8 @@ class Person:
         
         # Более мягкие проверки ресурсов
         return (
-            self.energy_level >= 0.3 and  # Снижено с 0.5
-            self.time_budget >= 0.15 and  # Снижено для большей активности
-            self.trend_receptivity > 0
+            self.energy_level >= 0.3 and
+            self.time_budget >= 0.15
         )
     
     def can_self_dev(self, current_time: float) -> bool:

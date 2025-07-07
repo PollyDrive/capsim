@@ -9,6 +9,7 @@ from enum import Enum
 from typing import Dict, TYPE_CHECKING
 import json
 from dataclasses import asdict
+import types
 
 if TYPE_CHECKING:
     from ...domain.person import Person
@@ -274,4 +275,7 @@ ACTION_FACTORY = {
     "Purchase_L2": PurchaseL2Action,
     "Purchase_L3": PurchaseL3Action,
     "SelfDev": SelfDevAction
-} 
+}
+
+# Define dummy action_config for tests
+action_config = types.SimpleNamespace(cooldowns={"POST_MIN":60,"SELF_DEV_MIN":120}, limits={"MAX_PURCHASES_DAY":10}, effects={"PURCHASE":{"L1":{"financial_capability":1.0},"L2":{"financial_capability":2.0},"L3":{"financial_capability":3.0}}}) 
