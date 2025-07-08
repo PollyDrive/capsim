@@ -2,8 +2,8 @@
 # Defines cooldowns, limits, effects, and profession weights for all agent actions
 
 COOLDOWNS:
-  POST_MIN: 60      # Minimum minutes between posts
-  SELF_DEV_MIN: 30  # Minimum minutes between self-development actions
+  POST_MIN: 30      # Reduced for higher activity
+  SELF_DEV_MIN: 15  # Reduced for higher activity
 
 LIMITS:
   MAX_PURCHASES_DAY: 5  # Maximum purchases per agent per day

@@ -55,6 +55,11 @@ class Person:
     simulation_id: Optional[UUID] = None
     created_at: datetime = field(default_factory=datetime.utcnow)
     
+    # Backward compatibility alias expected by old tests
+    @property
+    def person_id(self) -> UUID:  # noqa: D401
+        return self.id
+    
     def decide_action(self, context: "SimulationContext") -> Optional[str]:
         """
         Принимает решение о следующем действии агента.
@@ -194,9 +199,8 @@ class Person:
         
         # Более мягкие проверки ресурсов
         return (
-            self.energy_level >= 0.3 and  # Снижено с 0.5
-            self.time_budget >= 0.15 and  # Снижено для большей активности
-            self.trend_receptivity > 0
+            self.energy_level >= 0.3 and
+            self.time_budget >= 0.15
         )
     
     def can_self_dev(self, current_time: float) -> bool:
@@ -274,13 +278,19 @@ class Person:
         return profession_affinities.get(topic, 2.5)  # Дефолт средняя склонность
         
     @classmethod
-    def create_random_agent(cls, profession: str, simulation_id: UUID) -> "Person":
+    def create_random_agent(
+        cls,
+        profession: str,
+        simulation_id: UUID,
+        ranges_map: Optional[Dict[str, Dict[str, tuple]]] = None,
+    ) -> "Person":
         """
         Создает случайного агента с заданной профессией СТРОГО СОГЛАСНО ТЗ.
         
         Args:
             profession: Профессия агента (один из 12 из ТЗ)
             simulation_id: ID симуляции
+            ranges_map: Карта диапазонов атрибутов, загруженная из БД (agents_profession)
             
         Returns:
             Новый экземпляр Person с русскими именами и правильными атрибутами
@@ -313,63 +323,12 @@ class Person:
         birth_day = random.randint(1, 28)  # Безопасный день для всех месяцев
         birth_date = date(birth_year, birth_month, birth_day)
 
-        # СТРОГИЕ ДИАПАЗОНЫ АТРИБУТОВ ПО ПРОФЕССИЯМ из ТЗ (таблица 2.4)
-        profession_ranges = {
-            "ShopClerk": {
-                "financial_capability": (2, 4), "trend_receptivity": (0.5, 1.5),
-                "social_status": (1, 3), "energy_level": (2, 5), "time_budget": (3, 5)
-            },
-            "Worker": {
-                "financial_capability": (2, 4), "trend_receptivity": (0.5, 1.5),
-                "social_status": (1, 2), "energy_level": (2, 5), "time_budget": (3, 5)
-            },
-            "Developer": {
-                "financial_capability": (3, 5), "trend_receptivity": (1.5, 2.5),
-                "social_status": (2, 4), "energy_level": (2, 5), "time_budget": (2, 4)
-            },
-            "Politician": {
-                "financial_capability": (3, 5), "trend_receptivity": (1.5, 2.5),
-                "social_status": (4, 5), "energy_level": (2, 5), "time_budget": (2, 4)
-            },
-            "Blogger": {
-                "financial_capability": (2, 4), "trend_receptivity": (2.0, 3.0),
-                "social_status": (3, 5), "energy_level": (2, 5), "time_budget": (3, 5)
-            },
-            "Businessman": {
-                "financial_capability": (4, 5), "trend_receptivity": (1.0, 2.0),
-                "social_status": (4, 5), "energy_level": (2, 5), "time_budget": (2, 4)
-            },
-            "SpiritualMentor": {
-                "financial_capability": (1, 3), "trend_receptivity": (1.0, 2.5),
-                "social_status": (2, 4), "energy_level": (3, 5), "time_budget": (2, 4)
-            },
-            "Philosopher": {
-                "financial_capability": (1, 3), "trend_receptivity": (0.5, 1.5),
-                "social_status": (1, 3), "energy_level": (2, 5), "time_budget": (2, 4)
-            },
-            "Unemployed": {
-                "financial_capability": (1, 2), "trend_receptivity": (1.5, 2.5),
-                "social_status": (1, 2), "energy_level": (3, 5), "time_budget": (3, 5)
-            },
-            "Teacher": {
-                "financial_capability": (1, 3), "trend_receptivity": (0.5, 1.5),
-                "social_status": (2, 4), "energy_level": (2, 5), "time_budget": (2, 4)
-            },
-            "Artist": {
-                "financial_capability": (1, 3), "trend_receptivity": (1.0, 2.0),
-                "social_status": (2, 4), "energy_level": (4, 5), "time_budget": (3, 5)
-            },
-            "Doctor": {
-                "financial_capability": (2, 4), "trend_receptivity": (0.5, 1.5),
-                "social_status": (3, 5), "energy_level": (2, 5), "time_budget": (1, 2)
-            }
-        }
-        
-        # Проверяем что профессия есть в списке ТЗ
-        if profession not in profession_ranges:
-            raise ValueError(f"Профессия '{profession}' не найдена в ТЗ. Доступные: {list(profession_ranges.keys())}")
-            
-        ranges = profession_ranges[profession]
+        # Берём диапазоны из БД (agents_profession) если переданы
+        if ranges_map is None or profession not in ranges_map:
+            raise ValueError(
+                f"Диапазоны для профессии '{profession}' не найдены. Убедитесь, что таблица agents_profession заполнена."
+            )
+        ranges = ranges_map[profession]
 
         # ИНТЕРЕСЫ ПО ПРОФЕССИЯМ из ТЗ (таблица интересов)
         interest_ranges = {

@@ -14,10 +14,20 @@ datasources:
       sslmode: 'disable'
       postgresVersion: 1500
       timescaledb: false
-      
+    uid: Postgres
+
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: false
+    editable: true
+    uid: prometheus
+
   - name: Loki
     type: loki
     access: proxy
     url: http://loki:3100
     isDefault: false
-    editable: true 
+    editable: true
+    uid: Loki 

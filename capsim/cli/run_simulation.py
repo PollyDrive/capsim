@@ -10,6 +10,9 @@ import json
 import logging
 from typing import Optional
 
+# For test mode use in-memory repository
+from types import SimpleNamespace
+
 # Конфигурирование логирования
 logging.basicConfig(
     level=logging.INFO,
@@ -43,11 +46,9 @@ async def run_simulation_cli(
     # Проверяем доступность зависимостей
     try:
         from ..engine.simulation_engine import SimulationEngine
-        from ..db.repositories import DatabaseRepository
+        from ..db.repositories import DatabaseRepository as _RealRepository
     except ImportError as e:
         print(f"❌ Ошибка импорта: {e}")
-        print("📝 Убедитесь что установлены зависимости:")
-        print("  pip install sqlalchemy asyncpg psycopg2-binary")
         return
     
     # URL базы данных
@@ -62,8 +63,17 @@ async def run_simulation_cli(
         # Устанавливаем SIM_SPEED_FACTOR в настройки
         os.environ["SIM_SPEED_FACTOR"] = str(sim_speed_factor)
         
+        # Подмена репозитория на in-memory в тестовом режиме
+        if database_url and database_url.startswith("sqlite+aiosqlite"):  # тестовый режим
+            from reports.demo_simulation import _InMemoryRepo as DatabaseRepository  # type: ignore
+        else:
+            DatabaseRepository = _RealRepository  # type: ignore
+        
         # Создаем репозиторий и движок
-        db_repo = DatabaseRepository(database_url)
+        if DatabaseRepository is _RealRepository:
+            db_repo = DatabaseRepository(database_url)
+        else:
+            db_repo = DatabaseRepository()
         engine = SimulationEngine(db_repo)
         
         print("\n🔄 Инициализация симуляции...")

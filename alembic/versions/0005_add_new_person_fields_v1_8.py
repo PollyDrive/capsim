@@ -26,7 +26,7 @@ def upgrade() -> None:
     op.add_column('persons', sa.Column('purchases_today', sa.SmallInteger(), server_default='0', nullable=False), schema='capsim')
     op.add_column('persons', sa.Column('last_post_ts', sa.Double(), nullable=True), schema='capsim')
     op.add_column('persons', sa.Column('last_selfdev_ts', sa.Double(), nullable=True), schema='capsim')
-    op.add_column('persons', sa.Column('last_purchase_ts', postgresql.JSONB(), server_default="'{}'::jsonb", nullable=False), schema='capsim')
+    op.add_column('persons', sa.Column('last_purchase_ts', postgresql.JSONB(), server_default=sa.text("'{}'::jsonb"), nullable=False), schema='capsim')
     
     # Add GIN index for JSONB operations on last_purchase_ts
     op.create_index(
@@ -53,10 +53,9 @@ def upgrade() -> None:
         DO $$
         BEGIN
             IF NOT EXISTS (
-                SELECT 1 FROM information_schema.check_constraints 
-                WHERE constraint_schema = 'capsim' 
-                AND table_name = 'persons' 
-                AND constraint_name = 'check_energy_level_positive'
+                SELECT 1 FROM pg_constraint 
+                WHERE conname = 'check_energy_level_positive'
+                AND conrelid = 'capsim.persons'::regclass
             ) THEN
                 ALTER TABLE capsim.persons 
                 ADD CONSTRAINT check_energy_level_positive 

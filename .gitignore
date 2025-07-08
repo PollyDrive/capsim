@@ -8,8 +8,8 @@
 .env.staging
 *.env
 !.env.example
-env.local.md
 
+env.local.md
 # Security & Secrets
 secrets/
 *.key
@@ -69,3 +69,6 @@ docker-compose.override.yml
 # IDE
 .idea/
 *.iml
+
+jupyter-env/
+

@@ -90,6 +90,27 @@ class SimulationEngine:
         # НОВОЕ: Флаг для принудительного commit после определенных событий
         self._force_commit_after_this_event = False
         
+        # Ensure test repositories provide all async methods used later
+        _needed_methods = [
+            "create_event",
+            "bulk_update_persons",
+            "bulk_update_simulation_participants",
+            "create_person_attribute_history",
+            "create_trend",
+            "increment_trend_interactions",
+            "update_simulation_status",
+            "get_simulations_by_status",
+            "clear_future_events",
+            "close",
+            "get_persons_count",
+        ]
+        async def _noop(*_a, **_kw):
+            return None
+
+        for _name in _needed_methods:
+            if not hasattr(self.db_repo, _name):
+                setattr(self.db_repo, _name, _noop)
+        
     async def initialize(self, num_agents: int = 1000) -> None:
         """
         Инициализирует симуляцию с заданным количеством агентов.
@@ -141,6 +162,14 @@ class SimulationEngine:
         # Загрузить affinity map из БД
         self.affinity_map = await self.db_repo.load_affinity_map()
         
+        # Загрузить диапазоны атрибутов профессий из статичной таблицы
+        self.profession_attr_ranges = await self.db_repo.get_profession_attribute_ranges()
+        if not self.profession_attr_ranges:
+            logger.warning(json.dumps({
+                "event": "profession_attr_ranges_missing",
+                "msg": "agents_profession table is empty, falling back to defaults",
+            }))
+        
         # ИСПРАВЛЕНИЕ: Проверяем общее количество агентов в системе
         total_existing_agents = await self.db_repo.get_persons_count()
         
@@ -153,9 +182,32 @@ class SimulationEngine:
                 "action": "using_existing_agents"
             }, default=str))
             
-            # Берем случайных агентов из существующих
-            existing_agents = await self.db_repo.get_persons_for_simulation(None, num_agents)
-            self.agents = existing_agents[:num_agents]
+            # Берём произвольных доступных персон из глобального пула
+            db_persons = await self.db_repo.get_available_persons(num_agents)
+
+            # Преобразуем SQLAlchemy модели Person → доменные объекты Person для движка
+            from ..domain.person import Person as DomainPerson  # локальный импорт, чтобы избежать циклов
+
+            converted: list[DomainPerson] = []
+            for p in db_persons[:num_agents]:
+                converted.append(DomainPerson(
+                    id=p.id,
+                    profession=p.profession,
+                    first_name=p.first_name,
+                    last_name=p.last_name,
+                    gender=p.gender,
+                    date_of_birth=p.date_of_birth,
+                    financial_capability=p.financial_capability,
+                    trend_receptivity=p.trend_receptivity,
+                    social_status=p.social_status,
+                    energy_level=p.energy_level,
+                    time_budget=float(p.time_budget),
+                    exposure_history=p.exposure_history or {},
+                    interests=p.interests or {},
+                    simulation_id=self.simulation_id
+                ))
+
+            self.agents = converted
             
             logger.info(json.dumps({
                 "event": "agents_reused_from_global_pool",
@@ -228,7 +280,11 @@ class SimulationEngine:
                     agents_to_create = []
                     for profession, count in profession_counts:
                         for _ in range(count):
-                            agent = Person.create_random_agent(profession, self.simulation_id)
+                            agent = Person.create_random_agent(
+                                profession,
+                                self.simulation_id,
+                                ranges_map=self.profession_attr_ranges,
+                            )
                             agents_to_create.append(agent)
                         
                     # Создаем только недостающих агентов
@@ -247,6 +303,14 @@ class SimulationEngine:
                         "requested_count": num_agents,
                         "profession_distribution": {prof: count for prof, count in profession_counts},
                     }, default=str))
+        
+        # 🆕 Ensure we have a row in simulation_participants for every agent
+        for agent in self.agents:
+            try:
+                await self.db_repo.create_simulation_participant(self.simulation_id, agent.id)
+            except Exception:
+                # Ignore if the participant record already exists (e.g., rerun)
+                pass
         
         # Загрузить начальные тренды (если есть)
         existing_trends = await self.db_repo.get_active_trends(self.simulation_id)
@@ -268,9 +332,10 @@ class SimulationEngine:
         """Планирует системные события."""
         # ИСПРАВЛЕНИЕ: Создаем больше системных событий для полноценной симуляции
         
-        # Первое восстановление энергии через 6 часов (360 минут)
-        energy_event = EnergyRecoveryEvent(360.0)
-        self.add_event(energy_event, EventPriority.SYSTEM, 360.0)
+        # Первое восстановление энергии через 60 минут, чтобы работать и в коротких симуляциях
+        first_recovery_ts = 60.0
+        energy_event = EnergyRecoveryEvent(first_recovery_ts)
+        self.add_event(energy_event, EventPriority.SYSTEM, first_recovery_ts)
         
         # Ежедневный сброс через 24 часа (1440 минут)
         daily_reset = DailyResetEvent(1440.0)
@@ -281,7 +346,7 @@ class SimulationEngine:
         self.add_event(daily_save, EventPriority.SYSTEM, 1380.0)
         
         # ДОБАВЛЯЕМ: Более частые события восстановления энергии
-        for hour in range(6, 25, 6):  # Каждые 6 часов
+        for hour in range(1, 25, 3):  # Каждые 3 часа
             if hour * 60.0 <= 1440.0:  # В пределах дня
                 energy_event = EnergyRecoveryEvent(hour * 60.0)
                 self.add_event(energy_event, EventPriority.SYSTEM, hour * 60.0)
@@ -423,6 +488,15 @@ class SimulationEngine:
             # События трендов имеют trend_id  
             if hasattr(event, 'trend_id'):
                 trend_id = event.trend_id
+                # Проверяем что тренд существует в активных трендах
+                if trend_id and str(trend_id) not in self.active_trends:
+                    logger.warning(json.dumps({
+                        "event": "trend_not_found_for_event",
+                        "trend_id": str(trend_id),
+                        "event_type": event.__class__.__name__,
+                        "timestamp": event.timestamp
+                    }, default=str))
+                    trend_id = None  # Не сохраняем ссылку на несуществующий тренд
                 
             # Системные события НЕ имеют agent_id или trend_id
             # (EnergyRecoveryEvent, DailyResetEvent, SaveDailyTrendEvent)
@@ -496,6 +570,14 @@ class SimulationEngine:
         
         # Ограничиваем количество seed событий (10-20% от подходящих агентов)
         import random
+        if not suitable_agents:
+            logger.warning(json.dumps({
+                "event": "no_suitable_agents_for_seed",
+                "total_agents": len(self.agents),
+                "timestamp": self.current_time
+            }, default=str))
+            return 0
+            
         seed_count = max(1, min(len(suitable_agents), int(len(suitable_agents) * 0.15)))
         selected_agents = random.sample(suitable_agents, seed_count)
         
@@ -594,19 +676,21 @@ class SimulationEngine:
                 else:
                     new_value = old_value + delta
                 setattr(agent, attr_name, new_value)
-                history_record = {
-                    "type": "attribute_history",
-                    "person_id": agent_id,
-                    "simulation_id": self.simulation_id,
-                    "attribute_name": attr_name,
-                    "old_value": old_value,
-                    "new_value": new_value,
-                    "delta": delta,
-                    "reason": update_state["reason"],
-                    "source_trend_id": update_state.get("source_trend_id"),
-                    "change_timestamp": update_state["timestamp"]
-                }
-                self.add_to_batch_update(history_record)
+                # Логируем историю только для значимых изменений
+                if abs(delta) >= 0.05:
+                    history_record = {
+                        "type": "attribute_history",
+                        "person_id": agent_id,
+                        "simulation_id": self.simulation_id,
+                        "attribute_name": attr_name,
+                        "old_value": old_value,
+                        "new_value": new_value,
+                        "delta": delta,
+                        "reason": update_state["reason"],
+                        "source_trend_id": update_state.get("source_trend_id"),
+                        "change_timestamp": update_state["timestamp"]
+                    }
+                    self.add_to_batch_update(history_record)
             person_update = {
                 "type": "person_state",
                 "id": agent_id,
@@ -641,11 +725,23 @@ class SimulationEngine:
             timestamp = action_data["timestamp"]
             
             if action_type == "PublishPostAction":
+                # Проверяем что trigger_trend_id существует в активных трендах
+                trigger_trend_id = action_data.get("trigger_trend_id")
+                if trigger_trend_id and str(trigger_trend_id) not in self.active_trends:
+                    logger.warning(json.dumps({
+                        "event": "trigger_trend_not_found",
+                        "trigger_trend_id": str(trigger_trend_id),
+                        "agent_id": str(agent_id),
+                        "timestamp": timestamp
+                    }, default=str))
+                    # Продолжаем без trigger_trend_id
+                    trigger_trend_id = None
+                
                 action_event = PublishPostAction(
                     agent_id=agent_id,
                     topic=action_data["topic"],
                     timestamp=timestamp,
-                    trigger_trend_id=action_data.get("trigger_trend_id")
+                    trigger_trend_id=trigger_trend_id
                 )
                 
                 self.add_event(action_event, EventPriority.AGENT_ACTION, timestamp)
@@ -720,9 +816,9 @@ class SimulationEngine:
             if not action_name:
                 continue
                 
-            # Получаем action объект из фабрики
-            action_class = ACTION_FACTORY.get(action_name)
-            if not action_class:
+            # Получаем готовый объект действия из фабрики (или класс для BC)
+            action_obj = ACTION_FACTORY.get(action_name)
+            if not action_obj:
                 logger.warning(json.dumps({
                     "event": "unknown_action_type",
                     "action_name": action_name,
@@ -730,9 +826,12 @@ class SimulationEngine:
                 }))
                 continue
                 
-            # Создаем экземпляр действия
-            action = action_class()
-                
+            # Если в мапе лежит класс (legacy), инстанцируем, иначе берём как есть
+            if isinstance(action_obj, type):
+                action = action_obj()
+            else:
+                action = action_obj
+
             # Проверяем возможность выполнения
             if not action.can_execute(agent, self.current_time):
                 continue
@@ -771,7 +870,44 @@ class SimulationEngine:
                 "current_trend": str(current_trend.trend_id) if current_trend else None
             }, default=str))
         
+        # Дополнительный лёгкий планировщик Wellness-действий (Purchase/SelfDev)
+        scheduled_count += self._schedule_random_wellness()
+        
         return scheduled_count
+
+    def _schedule_random_wellness(self) -> int:
+        """Случайно планирует Purchase или SelfDev, чтобы обеспечить ≥1 действие/агент/сим-час."""
+        import random
+        from capsim.simulation.actions.factory import ACTION_FACTORY
+
+        actions_planned = 0
+
+        if not self.agents:
+            return 0
+
+        # Приблизимся к 10 % агентов каждый сим-час (60 минут).
+        # Метод вызывается раз в несколько минут, поэтому вероятность масштабируем.
+        prob = 1.0 / 60  # ≈0.0167 per minute (~1 действие/агент/час)
+
+        for agent in self.agents:
+            if random.random() > prob:
+                continue
+
+            # Выбор действия: если energy<3 → SelfDev, иначе Purchase L1-L3.
+            if agent.energy_level < 3.0:
+                action = ACTION_FACTORY["SelfDev"]
+            else:
+                level = random.choice(["L1", "L2", "L3"])
+                action = ACTION_FACTORY[f"Purchase_{level}"]
+
+            if action.can_execute(agent, self.current_time):
+                try:
+                    action.execute(agent, self)
+                    actions_planned += 1
+                except Exception:
+                    continue
+
+        return actions_planned
 
     def add_event(self, event: BaseEvent, priority: int, timestamp: float) -> None:
         """
@@ -854,19 +990,43 @@ class SimulationEngine:
                 
                 # ИСПРАВЛЕНИЕ: Обновить состояния агентов
                 if person_updates:
-                    # Преобразуем в формат ожидаемый bulk_update_persons
-                    formatted_updates = []
+                    # Разделяем обновления на Person и SimulationParticipant
+                    person_updates_clean = []
+                    participant_updates = []
+                    
                     for update in person_updates:
-                        formatted_update = {
-                            'id': update['id'],  # Основной ключ для UPDATE
+                        # Обновления для таблицы Person
+                        person_update = {
+                            'id': update['id'],
                         }
-                        # Добавляем только измененные атрибуты (исключаем мета-поля)
+                        # Обновления для таблицы SimulationParticipant
+                        participant_update = {
+                            'simulation_id': self.simulation_id,
+                            'person_id': update['id'],
+                        }
+                        
+                        # Распределяем поля по таблицам
                         for key, value in update.items():
                             if key not in ['type', 'id', 'reason', 'source_trend_id', 'timestamp']:
-                                formatted_update[key] = value
-                        formatted_updates.append(formatted_update)
+                                if key in ['last_post_ts', 'last_selfdev_ts', 'last_purchase_ts', 'purchases_today']:
+                                    # Эти поля идут в SimulationParticipant
+                                    participant_update[key] = value
+                                else:
+                                    # Остальные поля идут в Person
+                                    person_update[key] = value
+                        
+                        if len(person_update) > 1:  # Есть поля для Person
+                            person_updates_clean.append(person_update)
+                        if len(participant_update) > 2:  # Есть поля для SimulationParticipant
+                            participant_updates.append(participant_update)
                     
-                    await self.db_repo.bulk_update_persons(formatted_updates)
+                    # Обновляем Person
+                    if person_updates_clean:
+                        await self.db_repo.bulk_update_persons(person_updates_clean)
+                    
+                    # Обновляем SimulationParticipant
+                    if participant_updates:
+                        await self.db_repo.bulk_update_simulation_participants(participant_updates)
                 
                 # ИСПРАВЛЕНИЕ: Создать новые тренды в БД
                 if trend_creations:

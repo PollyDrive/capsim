@@ -179,13 +179,13 @@ healthcheck:
 
 ```bash
 # Проверка количества агентов
-psql postgresql://postgres:capsim321@localhost:5432/capsim_db -c "SELECT COUNT(*) FROM capsim.persons;"
+psql postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME} -c "SELECT COUNT(*) FROM capsim.persons;"
 
 # Проверка активных симуляций
-psql postgresql://postgres:capsim321@localhost:5432/capsim_db -c "SELECT run_id, status, num_agents FROM capsim.simulation_runs ORDER BY start_time DESC LIMIT 5;"
+psql postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME} -c "SELECT run_id, status, num_agents FROM capsim.simulation_runs ORDER BY start_time DESC LIMIT 5;"
 
 # Проверка последних событий
-psql postgresql://postgres:capsim321@localhost:5432/capsim_db -c "SELECT COUNT(*) FROM capsim.events WHERE created_at > NOW() - INTERVAL '1 hour';"
+psql postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME} -c "SELECT COUNT(*) FROM capsim.events WHERE created_at > NOW() - INTERVAL '1 hour';"
 
 # Проверка метрик Prometheus
 curl -s http://localhost:8000/metrics | grep capsim_simulations_active

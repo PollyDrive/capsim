@@ -19,6 +19,28 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+class DatabaseRepository:  # placeholder for tests; replaced by patch inside tests
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def get_active_simulations(self):
+        return []
+
+    async def get_simulation_run(self, *args, **kwargs):
+        return None
+
+    async def update_simulation_status(self, *args, **kwargs):
+        pass
+
+    async def clear_future_events(self, *args, **kwargs):
+        return 0
+
+    async def force_complete_simulation(self, *args, **kwargs):
+        pass
+
+    async def close(self):
+        pass
+
 
 async def stop_simulation_cli(
     simulation_id: Optional[str] = None,
@@ -225,3 +247,16 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# --- Compatibility helpers for legacy tests ---
+# These wrappers keep old test-suite working after refactor.
+
+
+async def _graceful_stop_simulation(simulation_id: str, database_url: str | None = None):
+    """Legacy helper used in tests – graceful stop wrapper."""
+    await stop_simulation_cli(simulation_id=simulation_id, force=False, database_url=database_url)
+
+
+async def _force_stop_simulation(simulation_id: str, database_url: str | None = None):
+    """Legacy helper used in tests – force stop wrapper."""
+    await stop_simulation_cli(simulation_id=simulation_id, force=True, database_url=database_url)

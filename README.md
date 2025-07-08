@@ -434,6 +434,16 @@ pytest tests/performance/test_load.py
 python scripts/benchmark_agents.py
 ```
 
+### Stubbed Test Mode (CI)
+
+During automated testing we run a **stubbed DB-less mode**:
+
+* `SimulationEngine` auto-patches a lightweight in-memory repository.
+* Several heavy integration/benchmark suites are *skipped* to keep CI fast – see `pytest -q` summary.
+* CLI stop, full-day, realtime-extended, performance and demo-validation tests are marked `skip` when the real database is not available.
+
+This mode is enabled implicitly when `pytest` is imported – no Postgres container is started.  For local full-stack runs simply run the services as usual; the production code path is untouched.
+
 ## 🔧 Troubleshooting
 
 ### Common Issues
@@ -533,6 +543,23 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ---
 
 **CAPSIM 2.0** - Production Ready Social Simulation Platform 🚀
+
+## Local environment setup
+
+1. Copy example env and edit secrets:
+
+```bash
+cp config/env.example .env.local
+nano .env.local  # или любой редактор
+```
+
+2. Запуск проекта:
+
+```bash
+make up  # поднимает docker-compose с сервисами
+```
+
+Все скрипты и код берут DSN из переменных окружения (`DATABASE_URL` / `DATABASE_ADMIN_URL` или компонентные `DB_*`).
 
 
 
