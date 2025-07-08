@@ -1,0 +1,14 @@
+stages:
+  - security
+
+trufflehog_scan:
+  stage: security
+  image:
+    name: trufflesecurity/trufflehog:v3.80.0   # ← любая свежая v3
+    entrypoint: [""]                           # важно, иначе entrypoint внутри образа перекроет shell
+  script:
+    # сканируем только последние 3 коммита репозитория
+    - trufflehog filesystem --no-update --fail --max-depth 3 .
+  artifacts:
+    when: always
+    paths: [trufflehog.json]                   # результаты можно сохранить
