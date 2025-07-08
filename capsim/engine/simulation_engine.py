@@ -162,6 +162,14 @@ class SimulationEngine:
         # Загрузить affinity map из БД
         self.affinity_map = await self.db_repo.load_affinity_map()
         
+        # Загрузить диапазоны атрибутов профессий из статичной таблицы
+        self.profession_attr_ranges = await self.db_repo.get_profession_attribute_ranges()
+        if not self.profession_attr_ranges:
+            logger.warning(json.dumps({
+                "event": "profession_attr_ranges_missing",
+                "msg": "agents_profession table is empty, falling back to defaults",
+            }))
+        
         # ИСПРАВЛЕНИЕ: Проверяем общее количество агентов в системе
         total_existing_agents = await self.db_repo.get_persons_count()
         
@@ -272,7 +280,11 @@ class SimulationEngine:
                     agents_to_create = []
                     for profession, count in profession_counts:
                         for _ in range(count):
-                            agent = Person.create_random_agent(profession, self.simulation_id)
+                            agent = Person.create_random_agent(
+                                profession,
+                                self.simulation_id,
+                                ranges_map=self.profession_attr_ranges,
+                            )
                             agents_to_create.append(agent)
                         
                     # Создаем только недостающих агентов
@@ -291,6 +303,14 @@ class SimulationEngine:
                         "requested_count": num_agents,
                         "profession_distribution": {prof: count for prof, count in profession_counts},
                     }, default=str))
+        
+        # 🆕 Ensure we have a row in simulation_participants for every agent
+        for agent in self.agents:
+            try:
+                await self.db_repo.create_simulation_participant(self.simulation_id, agent.id)
+            except Exception:
+                # Ignore if the participant record already exists (e.g., rerun)
+                pass
         
         # Загрузить начальные тренды (если есть)
         existing_trends = await self.db_repo.get_active_trends(self.simulation_id)

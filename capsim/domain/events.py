@@ -220,28 +220,19 @@ class EnergyRecoveryEvent(BaseEvent):
     
     def process(self, engine: "SimulationEngine") -> None:
         """Execute energy recovery for all agents."""
-        recovery_amount = 1.0  # v1.8 tweak: частичное восстановление энергии
-        updated_count = 0
-        
+        recovery_amount = 1.0
         for agent in engine.agents:
-            if agent.energy_level < 5.0:
-                old_energy = agent.energy_level
-                agent.energy_level = min(5.0, agent.energy_level + recovery_amount)
-                
-                if agent.energy_level != old_energy:
-                    updated_count += 1
+            if agent.energy_level < 5:
+                agent.energy_level = min(5, agent.energy_level + 1)
+        next = EnergyRecoveryEvent(self.timestamp + 60)
+        engine.add_event(next, EventPriority.SYSTEM, next.timestamp)
         
-        # Schedule next energy recovery event (every 60 minutes)
-        next_recovery = EnergyRecoveryEvent(timestamp=self.timestamp + 60.0)
-        engine.add_event(next_recovery, EventPriority.SYSTEM, next_recovery.timestamp)
-        
-        if updated_count > 0:
-            logger.info(json.dumps({
-                "event": "energy_recovery_completed",
-                "updated_agents": updated_count,
-                "recovery_amount": recovery_amount,
-                "timestamp": self.timestamp
-            }, default=str))
+        logger.info(json.dumps({
+            "event": "energy_recovery_completed",
+            "updated_agents": len(engine.agents),
+            "recovery_amount": recovery_amount,
+            "timestamp": self.timestamp
+        }, default=str))
 
 
 class DailyResetEvent(BaseEvent):

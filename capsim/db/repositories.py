@@ -18,7 +18,7 @@ from sqlalchemy.pool import StaticPool
 from .models import (
     SimulationRun, Person, SimulationParticipant, Trend, Event, 
     PersonAttributeHistory, AgentInterests, AffinityMap, DailyTrendSummary,
-    TopicInterestMapping
+    TopicInterestMapping, AgentsProfession
 )
 
 logger = logging.getLogger(__name__)
@@ -674,4 +674,22 @@ class DatabaseRepository:
         """Execute raw SQL query."""
         async with self.ReadOnlySession() as session:
             result = await session.execute(text(query), params or {})
-            return [dict(row._mapping) for row in result] 
+            return [dict(row._mapping) for row in result]
+            
+    async def get_profession_attribute_ranges(self) -> Dict[str, Dict[str, tuple]]:
+        """Load profession attribute ranges from agents_profession table."""
+        async with self.ReadOnlySession() as session:
+            result = await session.execute(select(AgentsProfession))
+            rows = result.scalars().all()
+            if not rows:
+                return {}
+            ranges: Dict[str, Dict[str, tuple]] = {}
+            for row in rows:
+                ranges[row.profession] = {
+                    "financial_capability": (row.financial_capability_min, row.financial_capability_max),
+                    "trend_receptivity": (row.trend_receptivity_min, row.trend_receptivity_max),
+                    "social_status": (row.social_status_min, row.social_status_max),
+                    "energy_level": (row.energy_level_min, row.energy_level_max),
+                    "time_budget": (row.time_budget_min, row.time_budget_max),
+                }
+            return ranges 

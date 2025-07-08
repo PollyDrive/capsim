@@ -51,6 +51,7 @@ flowchart TD
 
 ### Database Schema
 - **PostgreSQL 15** с схемой `capsim`
+- **agents_profession** – статичная таблица диапазонов атрибутов (min/max) по профессиям
 - **JSONB** поля для гибкого хранения (interests, purchase_history)
 - **UUID** primary keys для масштабируемости
 - **Temporal tracking** для аудита изменений

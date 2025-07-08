@@ -232,4 +232,30 @@ class TopicInterestMapping(Base):
     # Уникальный индекс на topic_code
     __table_args__ = (
         {'sqlite_autoincrement': True},
+    )
+
+
+class AgentsProfession(Base):
+    """Статичная таблица диапазонов атрибутов для каждой профессии."""
+    __tablename__ = "agents_profession"
+
+    profession = Column(String(50), primary_key=True)  # Teacher, Developer, ...
+
+    # Диапазоны
+    financial_capability_min = Column(Float, nullable=False)
+    financial_capability_max = Column(Float, nullable=False)
+    trend_receptivity_min = Column(Float, nullable=False)
+    trend_receptivity_max = Column(Float, nullable=False)
+    social_status_min = Column(Float, nullable=False)
+    social_status_max = Column(Float, nullable=False)
+    energy_level_min = Column(Float, nullable=False)
+    energy_level_max = Column(Float, nullable=False)
+    time_budget_min = Column(Float, nullable=False)
+    time_budget_max = Column(Float, nullable=False)
+
+    # Метаданные
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        {'sqlite_autoincrement': True},
     ) 
