@@ -1,6 +1,7 @@
 .PHONY: help dev-up dev-down test lint bootstrap clean docker-build
 
 include .env.local
+-include env.local.md
 export
 
 # Default target

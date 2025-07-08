@@ -31,9 +31,17 @@ def upgrade() -> None:
         UPDATE capsim.persons
         SET date_of_birth = CASE
             WHEN EXTRACT(YEAR FROM date_of_birth) > 2007 THEN 
-                DATE(2007 - (EXTRACT(YEAR FROM date_of_birth) - 2007), EXTRACT(MONTH FROM date_of_birth), EXTRACT(DAY FROM date_of_birth))
+                make_date(
+                    (2007 - ((EXTRACT(YEAR FROM date_of_birth))::int - 2007)),
+                    (EXTRACT(MONTH FROM date_of_birth))::int,
+                    (EXTRACT(DAY FROM date_of_birth))::int
+                )
             WHEN EXTRACT(YEAR FROM date_of_birth) < 1960 THEN
-                DATE(1960 + (1960 - EXTRACT(YEAR FROM date_of_birth)), EXTRACT(MONTH FROM date_of_birth), EXTRACT(DAY FROM date_of_birth))
+                make_date(
+                    (1960 + (1960 - (EXTRACT(YEAR FROM date_of_birth))::int)),
+                    (EXTRACT(MONTH FROM date_of_birth))::int,
+                    (EXTRACT(DAY FROM date_of_birth))::int
+                )
             ELSE date_of_birth
         END
         WHERE date_of_birth IS NOT NULL

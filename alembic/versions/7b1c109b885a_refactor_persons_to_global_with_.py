@@ -29,7 +29,7 @@ def upgrade() -> None:
         sa.Column('purchases_today', sa.SmallInteger(), server_default='0', nullable=False),
         sa.Column('last_post_ts', sa.Double(), nullable=True),
         sa.Column('last_selfdev_ts', sa.Double(), nullable=True),
-        sa.Column('last_purchase_ts', postgresql.JSONB(), server_default='{}', nullable=False),
+        sa.Column('last_purchase_ts', postgresql.JSONB(), server_default=sa.text("'{}'::jsonb"), nullable=False),
         sa.ForeignKeyConstraint(['simulation_id'], ['capsim.simulation_runs.run_id'], ondelete='CASCADE'),
         sa.ForeignKeyConstraint(['person_id'], ['capsim.persons.id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('simulation_id', 'person_id'),
@@ -87,7 +87,7 @@ def downgrade() -> None:
     op.add_column('persons', sa.Column('purchases_today', sa.SmallInteger(), server_default='0', nullable=False), schema='capsim')
     op.add_column('persons', sa.Column('last_post_ts', sa.Double(), nullable=True), schema='capsim')
     op.add_column('persons', sa.Column('last_selfdev_ts', sa.Double(), nullable=True), schema='capsim')
-    op.add_column('persons', sa.Column('last_purchase_ts', postgresql.JSONB(), server_default='{}', nullable=False), schema='capsim')
+    op.add_column('persons', sa.Column('last_purchase_ts', postgresql.JSONB(), server_default=sa.text("'{}'::jsonb"), nullable=False), schema='capsim')
     
     # 3. Migrate data back from simulation_participants to persons
     op.execute("""

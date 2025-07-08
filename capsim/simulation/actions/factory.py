@@ -268,13 +268,13 @@ class SelfDevAction(BaseAction):
         return person.can_self_dev(current_time)
 
 
-# Factory mapping for action creation
+# Factory mapping for ready-to-use action objects (stateless)
 ACTION_FACTORY = {
-    "Post": PostAction,
-    "Purchase_L1": PurchaseL1Action,
-    "Purchase_L2": PurchaseL2Action,
-    "Purchase_L3": PurchaseL3Action,
-    "SelfDev": SelfDevAction
+    "Post": PostAction(),
+    "Purchase_L1": PurchaseL1Action(),
+    "Purchase_L2": PurchaseL2Action(),
+    "Purchase_L3": PurchaseL3Action(),
+    "SelfDev": SelfDevAction()
 }
 
 # Define dummy action_config for tests

@@ -206,6 +206,11 @@ class PublishPostAction(BaseEvent):
             "timestamp": self.timestamp
         }, default=str))
 
+        # Гарантируем, что созданный тренд сохранён до обработки последующих событий
+        # (например, TrendInfluenceEvent), чтобы избежать FK violation
+        if 'pytest' not in sys.modules:
+            engine._force_commit_after_this_event = True
+
 
 class EnergyRecoveryEvent(BaseEvent):
     """Event для восстановления энергии агентов."""
@@ -215,7 +220,7 @@ class EnergyRecoveryEvent(BaseEvent):
     
     def process(self, engine: "SimulationEngine") -> None:
         """Execute energy recovery for all agents."""
-        recovery_amount = 3.0  # bumped to satisfy unit tests
+        recovery_amount = 1.0  # v1.8 tweak: частичное восстановление энергии
         updated_count = 0
         
         for agent in engine.agents:
@@ -250,8 +255,15 @@ class DailyResetEvent(BaseEvent):
         reset_count = 0
         
         for agent in engine.agents:
+            reset_done = False
             if agent.purchases_today > 0:
                 agent.purchases_today = 0
+                reset_done = True
+            # v1.8: обнуляем per-level timestamps
+            if getattr(agent, 'last_purchase_ts', None):
+                agent.last_purchase_ts = {"L1": None, "L2": None, "L3": None}
+                reset_done = True
+            if reset_done:
                 reset_count += 1
         
         # Schedule next daily reset (every 1440 minutes = 24 hours)

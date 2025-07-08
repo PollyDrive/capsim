@@ -30,7 +30,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "P1809F7CD0C75ACF3"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -123,7 +123,7 @@
     {
       "datasource": {
         "type": "loki",
-        "uid": "P8E80F9AEF21F6940"
+        "uid": "Loki"
       },
       "gridPos": {
         "h": 8,
@@ -189,9 +189,6 @@
         "y": 8
       },
       "id": 10,
-      "libraryPanel": {
-        "uid": "hKyXqUENz"
-      },
       "options": {
         "colorMode": "value",
         "graphMode": "area",
@@ -217,7 +214,7 @@
           "group": [],
           "metricColumn": "none",
           "rawQuery": true,
-          "rawSql": "SELECT count(*) FROM capsim.persons",
+          "rawSql": "SELECT num_agents FROM capsim.simulation_runs WHERE run_id = COALESCE((SELECT run_id FROM capsim.simulation_runs WHERE status = 'RUNNING' ORDER BY start_time DESC LIMIT 1), (SELECT run_id FROM capsim.simulation_runs WHERE status = 'COMPLETED' ORDER BY end_time DESC LIMIT 1))",
           "refId": "A",
           "select": [
             [
@@ -430,7 +427,8 @@
     {
       "datasource": {
         "type": "postgres",
-        "uid": "P44368ADAD746BC27"
+        "uid": "Postgres"
+
       },
       "fieldConfig": {
         "defaults": {
@@ -568,7 +566,7 @@
             "uid": "Postgres"
           },
           "format": "table",
-          "rawSql": "SELECT count(*) FROM capsim.events WHERE event_type = 'publish_post'",
+          "rawSql": "SELECT count(*) FROM capsim.events WHERE event_type = 'PublishPostAction'",
           "refId": "A"
         }
       ],
@@ -635,7 +633,7 @@
             "uid": "Postgres"
           },
           "format": "table",
-          "rawSql": "SELECT count(*) FROM capsim.events WHERE event_type = 'purchase'",
+          "rawSql": "SELECT count(*) FROM capsim.events WHERE event_type = 'PurchaseAction'",
           "refId": "A"
         }
       ],
@@ -702,11 +700,78 @@
             "uid": "Postgres"
           },
           "format": "table",
-          "rawSql": "SELECT count(*) FROM capsim.events WHERE event_type = 'self_dev'",
+          "rawSql": "SELECT count(*) FROM capsim.events WHERE event_type = 'SelfDevAction'",
           "refId": "A"
         }
       ],
       "title": "📚 Total SelfDev",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "Postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 30
+              },
+              {
+                "color": "red",
+                "value": 100
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 16
+      },
+      "id": 16,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "9.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "Postgres"
+          },
+          "format": "table",
+          "rawSql": "SELECT count(*) FROM capsim.events WHERE event_type = 'EnergyRecoveryEvent'",
+          "refId": "A"
+        }
+      ],
+      "title": "🔋 Total Energy Recovery",
       "type": "stat"
     },
     {
@@ -782,6 +847,39 @@
       ],
       "title": "Formatted Events Insert Details",
       "type": "logs"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "ops",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 39 },
+      "id": 17,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "targets": [
+        {
+          "datasource": "prometheus",
+          "expr": "rate(capsim_events_processed_total{event_type=\"EnergyRecoveryEvent\"}[5m])",
+          "refId": "A"
+        }
+      ],
+      "title": "🔋 EnergyRecoveryEvent Rate (5m)",
+      "type": "timeseries"
     }
   ],
   "refresh": "5s",

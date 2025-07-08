@@ -174,9 +174,32 @@ class SimulationEngine:
                 "action": "using_existing_agents"
             }, default=str))
             
-            # Берем случайных агентов из существующих
-            existing_agents = await self.db_repo.get_persons_for_simulation(None, num_agents)
-            self.agents = existing_agents[:num_agents]
+            # Берём произвольных доступных персон из глобального пула
+            db_persons = await self.db_repo.get_available_persons(num_agents)
+
+            # Преобразуем SQLAlchemy модели Person → доменные объекты Person для движка
+            from ..domain.person import Person as DomainPerson  # локальный импорт, чтобы избежать циклов
+
+            converted: list[DomainPerson] = []
+            for p in db_persons[:num_agents]:
+                converted.append(DomainPerson(
+                    id=p.id,
+                    profession=p.profession,
+                    first_name=p.first_name,
+                    last_name=p.last_name,
+                    gender=p.gender,
+                    date_of_birth=p.date_of_birth,
+                    financial_capability=p.financial_capability,
+                    trend_receptivity=p.trend_receptivity,
+                    social_status=p.social_status,
+                    energy_level=p.energy_level,
+                    time_budget=float(p.time_budget),
+                    exposure_history=p.exposure_history or {},
+                    interests=p.interests or {},
+                    simulation_id=self.simulation_id
+                ))
+
+            self.agents = converted
             
             logger.info(json.dumps({
                 "event": "agents_reused_from_global_pool",
@@ -289,9 +312,10 @@ class SimulationEngine:
         """Планирует системные события."""
         # ИСПРАВЛЕНИЕ: Создаем больше системных событий для полноценной симуляции
         
-        # Первое восстановление энергии через 6 часов (360 минут)
-        energy_event = EnergyRecoveryEvent(360.0)
-        self.add_event(energy_event, EventPriority.SYSTEM, 360.0)
+        # Первое восстановление энергии через 60 минут, чтобы работать и в коротких симуляциях
+        first_recovery_ts = 60.0
+        energy_event = EnergyRecoveryEvent(first_recovery_ts)
+        self.add_event(energy_event, EventPriority.SYSTEM, first_recovery_ts)
         
         # Ежедневный сброс через 24 часа (1440 минут)
         daily_reset = DailyResetEvent(1440.0)
@@ -302,7 +326,7 @@ class SimulationEngine:
         self.add_event(daily_save, EventPriority.SYSTEM, 1380.0)
         
         # ДОБАВЛЯЕМ: Более частые события восстановления энергии
-        for hour in range(6, 25, 6):  # Каждые 6 часов
+        for hour in range(1, 25, 3):  # Каждые 3 часа
             if hour * 60.0 <= 1440.0:  # В пределах дня
                 energy_event = EnergyRecoveryEvent(hour * 60.0)
                 self.add_event(energy_event, EventPriority.SYSTEM, hour * 60.0)
@@ -632,19 +656,21 @@ class SimulationEngine:
                 else:
                     new_value = old_value + delta
                 setattr(agent, attr_name, new_value)
-                history_record = {
-                    "type": "attribute_history",
-                    "person_id": agent_id,
-                    "simulation_id": self.simulation_id,
-                    "attribute_name": attr_name,
-                    "old_value": old_value,
-                    "new_value": new_value,
-                    "delta": delta,
-                    "reason": update_state["reason"],
-                    "source_trend_id": update_state.get("source_trend_id"),
-                    "change_timestamp": update_state["timestamp"]
-                }
-                self.add_to_batch_update(history_record)
+                # Логируем историю только для значимых изменений
+                if abs(delta) >= 0.05:
+                    history_record = {
+                        "type": "attribute_history",
+                        "person_id": agent_id,
+                        "simulation_id": self.simulation_id,
+                        "attribute_name": attr_name,
+                        "old_value": old_value,
+                        "new_value": new_value,
+                        "delta": delta,
+                        "reason": update_state["reason"],
+                        "source_trend_id": update_state.get("source_trend_id"),
+                        "change_timestamp": update_state["timestamp"]
+                    }
+                    self.add_to_batch_update(history_record)
             person_update = {
                 "type": "person_state",
                 "id": agent_id,
@@ -770,9 +796,9 @@ class SimulationEngine:
             if not action_name:
                 continue
                 
-            # Получаем action объект из фабрики
-            action_class = ACTION_FACTORY.get(action_name)
-            if not action_class:
+            # Получаем готовый объект действия из фабрики (или класс для BC)
+            action_obj = ACTION_FACTORY.get(action_name)
+            if not action_obj:
                 logger.warning(json.dumps({
                     "event": "unknown_action_type",
                     "action_name": action_name,
@@ -780,9 +806,12 @@ class SimulationEngine:
                 }))
                 continue
                 
-            # Создаем экземпляр действия
-            action = action_class()
-                
+            # Если в мапе лежит класс (legacy), инстанцируем, иначе берём как есть
+            if isinstance(action_obj, type):
+                action = action_obj()
+            else:
+                action = action_obj
+
             # Проверяем возможность выполнения
             if not action.can_execute(agent, self.current_time):
                 continue
@@ -821,7 +850,44 @@ class SimulationEngine:
                 "current_trend": str(current_trend.trend_id) if current_trend else None
             }, default=str))
         
+        # Дополнительный лёгкий планировщик Wellness-действий (Purchase/SelfDev)
+        scheduled_count += self._schedule_random_wellness()
+        
         return scheduled_count
+
+    def _schedule_random_wellness(self) -> int:
+        """Случайно планирует Purchase или SelfDev, чтобы обеспечить ≥1 действие/агент/сим-час."""
+        import random
+        from capsim.simulation.actions.factory import ACTION_FACTORY
+
+        actions_planned = 0
+
+        if not self.agents:
+            return 0
+
+        # Приблизимся к 10 % агентов каждый сим-час (60 минут).
+        # Метод вызывается раз в несколько минут, поэтому вероятность масштабируем.
+        prob = 1.0 / 60  # ≈0.0167 per minute (~1 действие/агент/час)
+
+        for agent in self.agents:
+            if random.random() > prob:
+                continue
+
+            # Выбор действия: если energy<3 → SelfDev, иначе Purchase L1-L3.
+            if agent.energy_level < 3.0:
+                action = ACTION_FACTORY["SelfDev"]
+            else:
+                level = random.choice(["L1", "L2", "L3"])
+                action = ACTION_FACTORY[f"Purchase_{level}"]
+
+            if action.can_execute(agent, self.current_time):
+                try:
+                    action.execute(agent, self)
+                    actions_planned += 1
+                except Exception:
+                    continue
+
+        return actions_planned
 
     def add_event(self, event: BaseEvent, priority: int, timestamp: float) -> None:
         """

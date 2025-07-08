@@ -51,6 +51,8 @@ class CapsimBootstrap:
         # Use DSN built from env vars
         self.admin_url = os.getenv("DATABASE_ADMIN_URL", SYNC_DSN)
         self.app_url = os.getenv("DATABASE_URL", SYNC_DSN)
+        # Для sync-операций Alembic/seed нам нужен стандартный psycopg2-DSN
+        self.sync_url = self.app_url.replace("+asyncpg", "")
         self.fake = Faker("ru_RU")
         
         # Профессии согласно ТЗ
@@ -127,7 +129,7 @@ class CapsimBootstrap:
         """Создание таблиц вручную если alembic не сработал."""
         print("🔧 Создание таблиц вручную...")
         
-        engine = create_engine(self.admin_url)
+        engine = create_engine(self.sync_url)
         
         # Define tables in correct order (respecting foreign keys)
         ddl_commands = [
@@ -304,7 +306,7 @@ class CapsimBootstrap:
             with open(affinity_file, 'r', encoding='utf-8') as f:
                 affinity_data = json.load(f)
                 
-            engine = create_engine(self.app_url)
+            engine = create_engine(self.sync_url)
             
             with engine.connect() as conn:
                 # Clear existing data
@@ -336,7 +338,7 @@ class CapsimBootstrap:
         """Создание базовых данных аффинити."""
         print("🔧 Создание базовых данных аффинити...")
         
-        engine = create_engine(self.app_url)
+        engine = create_engine(self.sync_url)
         
         # Basic affinity data
         basic_affinity = {
@@ -380,7 +382,7 @@ class CapsimBootstrap:
         """Загрузка интересов агентов по профессиям."""
         print("🎯 Загрузка интересов агентов...")
         
-        engine = create_engine(self.app_url)
+        engine = create_engine(self.sync_url)
         
         # Interest ranges by profession
         interest_ranges = {
@@ -425,7 +427,7 @@ class CapsimBootstrap:
         """Генерация глобальных агентов с русскими именами."""
         print(f"👥 Генерация {count} глобальных агентов с русскими именами...")
         
-        engine = create_engine(self.app_url)
+        engine = create_engine(self.sync_url)
         
         with engine.connect() as conn:
             # Clear existing data in correct order (respecting foreign keys)
@@ -525,7 +527,7 @@ class CapsimBootstrap:
         """Проверка корректности созданных данных."""
         print("🔍 Проверка целостности данных...")
         
-        engine = create_engine(self.app_url)
+        engine = create_engine(self.sync_url)
         
         with engine.connect() as conn:
             # Check tables exist
