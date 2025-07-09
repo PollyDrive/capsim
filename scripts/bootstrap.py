@@ -438,6 +438,18 @@ class CapsimBootstrap:
             conn.execute(text("DELETE FROM capsim.persons"))
             conn.execute(text("DELETE FROM capsim.simulation_runs"))
             
+            # ✨ Load attribute ranges from agents_profession once
+            ranges_map = {
+                row['profession']: {
+                    'financial_capability': (row['financial_capability_min'], row['financial_capability_max']),
+                    'trend_receptivity': (row['trend_receptivity_min'], row['trend_receptivity_max']),
+                    'social_status': (row['social_status_min'], row['social_status_max']),
+                    'energy_level': (row['energy_level_min'], row['energy_level_max']),
+                    'time_budget': (row['time_budget_min'], row['time_budget_max']),
+                }
+                for row in conn.execute(text("SELECT * FROM capsim.agents_profession")).mappings()
+            }
+
             # Generate agents in batches
             batch_size = 100
             agents_created = 0
@@ -446,7 +458,7 @@ class CapsimBootstrap:
                 batch_end = min(batch_start + batch_size, count)
                 agents_batch = []
                 
-                for i in range(batch_start, batch_end):
+                for _ in range(batch_start, batch_end):
                     # Generate Russian name with proper gender matching
                     gender = random.choice(['male', 'female'])
                     
@@ -460,17 +472,16 @@ class CapsimBootstrap:
                     # Random profession
                     profession = random.choice(self.PROFESSIONS)
                     
-                    # Generate attributes with proper validation
-                    financial_capability = round(random.uniform(0.5, 5.0), 3)
-                    trend_receptivity = round(random.uniform(0.5, 5.0), 3)
-                    social_status = round(random.uniform(0.5, 4.5), 3)  # ≥ 0.5 для осмысленных действий
-                    energy_level = round(random.uniform(0.5, 5.0), 3)
-                    time_budget = round(random.uniform(1.0, 5.0), 1)  # NUMERIC(2,1)
-                    
-                    # Generate interests (7 categories, each 0.1-0.9)
-                    interests = {}
-                    for interest in self.INTERESTS:
-                        interests[interest] = round(random.uniform(0.1, 0.9), 3)
+                    prof_ranges = ranges_map.get(profession)
+                    if not prof_ranges:
+                        raise ValueError(f"Ranges for profession {profession} not found in agents_profession table")
+
+                    # Generate attributes strictly within ranges
+                    financial_capability = round(random.uniform(*prof_ranges['financial_capability']), 3)
+                    trend_receptivity = round(random.uniform(*prof_ranges['trend_receptivity']), 3)
+                    social_status = round(random.uniform(*prof_ranges['social_status']), 3)
+                    energy_level = round(random.uniform(*prof_ranges['energy_level']), 3)
+                    time_budget = float(round(random.uniform(*prof_ranges['time_budget']) * 2) / 2)
                     
                     # Generate birth date (18-65 years old)
                     current_year = datetime.now().year
@@ -497,7 +508,7 @@ class CapsimBootstrap:
                         "energy_level": energy_level,
                         "time_budget": time_budget,
                         "exposure_history": json.dumps({}),
-                        "interests": json.dumps(interests),
+                        "interests": json.dumps({}),
                         "created_at": datetime.utcnow(),
                         "updated_at": datetime.utcnow()
                     })
