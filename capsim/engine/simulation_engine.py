@@ -247,89 +247,62 @@ class SimulationEngine:
                     # Используем все доступные агенты
                     self.agents = existing_agents
                 else:
-                    # Всегда пытаемся ДОБРАТЬ недостающих агентов из глобального пула
-                    available_global = await self.db_repo.get_available_persons(num_agents)
-                    # Исключаем тех, что уже закреплены за этой симуляцией
-                    available_global = [p for p in available_global if p.id not in {a.id for a in existing_agents}]
-
-                    reuse_needed = min(len(available_global), num_agents - len(existing_agents))
-
-                    reused_agents = available_global[:reuse_needed]
-                    if reused_agents:
-                        self.agents = existing_agents + reused_agents
-                    else:
-                        self.agents = existing_agents
-
-                    # Пересчитываем, сколько ещё нужно создать после реюза
-                    agents_to_create_count = num_agents - len(self.agents)
-
-                    # Если после реюза всё ещё не хватает — создаём недостающих СТРОГО ПО ТЗ
-                    if agents_to_create_count <= 0:
-                        logger.info(json.dumps({
-                            "event": "agents_reused_from_global_pool_partial",
-                            "simulation_id": str(self.simulation_id),
-                            "reused_count": len(reused_agents),
-                            "total_count": len(self.agents),
-                            "requested_count": num_agents
-                        }, default=str))
-                        # self.agents уже содержит нужное число; пропускаем создание
-                    else:
-                        # СТРОГОЕ РАСПРЕДЕЛЕНИЕ ПРОФЕССИЙ согласно ТЗ (таблица распределения)
-                        profession_distribution_tz = [
-                            ("Teacher", 0.08),        # 8%
-                            ("ShopClerk", 0.18),      # 18%
-                            ("Developer", 0.08),      # 8%
-                            ("Unemployed", 0.09),     # 9%
-                            ("Businessman", 0.11),    # 11%
-                            ("Artist", 0.08),         # 8%
-                            ("Worker", 0.15),         # 15%
-                            ("Blogger", 0.10),        # 10%
-                            ("SpiritualMentor", 0.05), # 5%
-                            ("Philosopher", 0.03),    # 3%
-                            ("Politician", 0.01),     # 1%
-                            ("Doctor", 0.04),         # 4%
-                        ]
+                    # СТРОГОЕ РАСПРЕДЕЛЕНИЕ ПРОФЕССИЙ согласно ТЗ (таблица распределения)
+                    profession_distribution_tz = [
+                        ("Teacher", 0.08),        # 8%
+                        ("ShopClerk", 0.18),      # 18%
+                        ("Developer", 0.08),      # 8%
+                        ("Unemployed", 0.09),     # 9%
+                        ("Businessman", 0.11),    # 11%
+                        ("Artist", 0.08),         # 8%
+                        ("Worker", 0.15),         # 15%
+                        ("Blogger", 0.10),        # 10%
+                        ("SpiritualMentor", 0.05), # 5%
+                        ("Philosopher", 0.03),    # 3%
+                        ("Politician", 0.01),     # 1%
+                        ("Doctor", 0.04),         # 4%
+                    ]
+                    
+                    # Вычисляем точное количество агентов по профессиям
+                    profession_counts = []
+                    total_assigned = 0
+                    
+                    for profession, percentage in profession_distribution_tz:
+                        count = int(agents_to_create_count * percentage)
+                        profession_counts.append((profession, count))
+                        total_assigned += count
+                    
+                    # Добавляем оставшихся агентов к самой популярной профессии (Teacher)
+                    if total_assigned < agents_to_create_count:
+                        remaining = agents_to_create_count - total_assigned
+                        profession_counts[0] = ("Teacher", profession_counts[0][1] + remaining)
+                    
+                    agents_to_create = []
+                    for profession, count in profession_counts:
+                        for _ in range(count):
+                            agent = Person.create_random_agent(
+                                profession,
+                                self.simulation_id,
+                                ranges_map=self.profession_attr_ranges,
+                            )
+                            agents_to_create.append(agent)
                         
-                        # Вычисляем точное количество агентов по профессиям
-                        profession_counts = []
-                        total_assigned = 0
-                        
-                        for profession, percentage in profession_distribution_tz:
-                            count = int(agents_to_create_count * percentage)
-                            profession_counts.append((profession, count))
-                            total_assigned += count
-                        
-                        # Добавляем оставшихся агентов к самой популярной профессии (Teacher)
-                        if total_assigned < agents_to_create_count:
-                            remaining = agents_to_create_count - total_assigned
-                            profession_counts[0] = ("Teacher", profession_counts[0][1] + remaining)
-                        
-                        agents_to_create = []
-                        for profession, count in profession_counts:
-                            for _ in range(count):
-                                agent = Person.create_random_agent(
-                                    profession,
-                                    self.simulation_id,
-                                    ranges_map=self.profession_attr_ranges,
-                                )
-                                agents_to_create.append(agent)
-                            
-                        # Создаем только недостающих агентов
-                        if agents_to_create:
-                            await self.db_repo.bulk_create_persons(agents_to_create)
-                        
-                        # Объединяем существующих и новых агентов
-                        self.agents = existing_agents + agents_to_create
-                        
-                        logger.info(json.dumps({
-                            "event": "agents_created_according_tz",
-                            "simulation_id": str(self.simulation_id),
-                            "existing_count": existing_count,
-                            "created_count": len(agents_to_create),
-                            "total_count": len(self.agents),
-                            "requested_count": num_agents,
-                            "profession_distribution": {prof: count for prof, count in profession_counts},
-                        }, default=str))
+                    # Создаем только недостающих агентов
+                    if agents_to_create:
+                        await self.db_repo.bulk_create_persons(agents_to_create)
+                    
+                    # Объединяем существующих и новых агентов
+                    self.agents = existing_agents + agents_to_create
+                    
+                    logger.info(json.dumps({
+                        "event": "agents_created_according_tz",
+                        "simulation_id": str(self.simulation_id),
+                        "existing_count": existing_count,
+                        "created_count": len(agents_to_create),
+                        "total_count": len(self.agents),
+                        "requested_count": num_agents,
+                        "profession_distribution": {prof: count for prof, count in profession_counts},
+                    }, default=str))
         
         # 🆕 Ensure we have a row in simulation_participants for every agent
         for agent in self.agents:
@@ -338,37 +311,6 @@ class SimulationEngine:
             except Exception:
                 # Ignore if the participant record already exists (e.g., rerun)
                 pass
-
-        # ---------- Убираем ORM-объекты Person, оставшиеся после реюза ----------
-        # Некоторые ветки выше могут положить в self.agents SQLAlchemy-модели,
-        # у которых нет логики поведения (decide_action, _select_best_topic).
-        from capsim.db.models import Person as DBPerson  # type: ignore
-        if any(isinstance(a, DBPerson) for a in self.agents):
-            from ..domain.person import Person as DomainPerson  # локальный импорт
-
-            converted: list[DomainPerson] = []
-            for p in self.agents:
-                if isinstance(p, DBPerson):
-                    converted.append(DomainPerson(
-                        id=p.id,
-                        profession=p.profession,
-                        first_name=p.first_name,
-                        last_name=p.last_name,
-                        gender=p.gender,
-                        date_of_birth=p.date_of_birth,
-                        financial_capability=p.financial_capability,
-                        trend_receptivity=p.trend_receptivity,
-                        social_status=p.social_status,
-                        energy_level=p.energy_level,
-                        time_budget=float(p.time_budget),
-                        exposure_history=p.exposure_history or {},
-                        interests=p.interests or {},
-                        simulation_id=self.simulation_id
-                    ))
-                else:
-                    converted.append(p)
-
-            self.agents = converted
         
         # Загрузить начальные тренды (если есть)
         existing_trends = await self.db_repo.get_active_trends(self.simulation_id)
@@ -390,8 +332,10 @@ class SimulationEngine:
         """Планирует системные события."""
         # ИСПРАВЛЕНИЕ: Создаем больше системных событий для полноценной симуляции
         
-        # ИСПРАВЛЕНИЕ: Убираем автоматическое восстановление энергии, чтобы оно не мешало агентам
-        # Восстановление энергии будет происходить только через MorningRecoveryEvent
+        # Первое восстановление энергии через 60 минут, чтобы работать и в коротких симуляциях
+        first_recovery_ts = 60.0
+        energy_event = EnergyRecoveryEvent(first_recovery_ts)
+        self.add_event(energy_event, EventPriority.SYSTEM, first_recovery_ts)
         
         # Ежедневный сброс через 24 часа (1440 минут)
         daily_reset = DailyResetEvent(1440.0)
@@ -401,12 +345,11 @@ class SimulationEngine:
         daily_save = SaveDailyTrendEvent(1380.0)
         self.add_event(daily_save, EventPriority.SYSTEM, 1380.0)
         
-        # v1.9: суточный цикл — ночь в 00:00, восстановление в 08:00
-        from capsim.domain.events import NightCycleEvent, MorningRecoveryEvent
-        night_event = NightCycleEvent(1440.0)  # 24 часа после старта = 00:00 второго дня
-        morning_event = MorningRecoveryEvent(1920.0)  # 32 часа после старта = 08:00 второго дня
-        self.add_event(night_event, EventPriority.SYSTEM, night_event.timestamp)
-        self.add_event(morning_event, EventPriority.SYSTEM, morning_event.timestamp)
+        # ДОБАВЛЯЕМ: Более частые события восстановления энергии
+        for hour in range(1, 25, 3):  # Каждые 3 часа
+            if hour * 60.0 <= 1440.0:  # В пределах дня
+                energy_event = EnergyRecoveryEvent(hour * 60.0)
+                self.add_event(energy_event, EventPriority.SYSTEM, hour * 60.0)
         
     async def run_simulation(self, duration_days: float = 1.0) -> None:
         """
@@ -455,12 +398,6 @@ class SimulationEngine:
                 if self.event_queue:
                     priority_event = heapq.heappop(self.event_queue)
                     
-                    # Проверяем, не вышли ли мы за пределы времени симуляции
-                    if priority_event.timestamp > end_time:
-                        # Возвращаем событие в очередь и завершаем симуляцию
-                        heapq.heappush(self.event_queue, priority_event)
-                        break
-                    
                     # Конвертировать sim_time в real_time для realtime режима
                     if priority_event.event.timestamp_real is None:
                         priority_event.event.timestamp_real = (
@@ -483,24 +420,20 @@ class SimulationEngine:
                         await self._batch_commit_states()
                 
                 # Запланировать новые действия агентов после каждого события
-                if events_processed % 5 == 0:  # Каждые 5 событий планируем действия агентов
+                if events_processed % 50 == 0:  # ИСПРАВЛЕНИЕ: каждые 50 событий вместо 10
                     scheduled = await self._schedule_agent_actions()
                     agent_actions_scheduled += scheduled
                     # Логируем состояние очереди каждые 50 событий
                     # self._log_event_queue_status()
+                else:
+                    # Если очередь пуста, продвигаем время и планируем действия
+                    if not self.event_queue:
+                        self.current_time += 5.0  # Продвигаем на 5 минут симуляции
+                        scheduled = await self._schedule_agent_actions()
+                        agent_actions_scheduled += scheduled
                 
-                # Если очередь пуста, завершаем симуляцию
-                if not self.event_queue:
-                    logger.info(json.dumps({
-                        "event": "simulation_ending_empty_queue",
-                        "current_time": self.current_time,
-                        "end_time": end_time,
-                        "events_processed": events_processed
-                    }, default=str))
-                    break
-                
-                # Минимальная пауза для cooperative multitasking
-                await asyncio.sleep(0.001 if not settings.ENABLE_REALTIME else 0.1 / max(1.0, settings.SIM_SPEED_FACTOR))
+                # Небольшая пауза для cooperative multitasking
+                await asyncio.sleep(0.1 if settings.ENABLE_REALTIME else 0.001)
                 
         except Exception as e:
             logger.error(json.dumps({
@@ -542,15 +475,6 @@ class SimulationEngine:
         
         try:
             # Обработать событие
-            logger.info(json.dumps({
-                "event": "processing_event",
-                "event_type": event.__class__.__name__,
-                "timestamp": event.timestamp,
-                "priority": event.priority,
-                "agent_id": str(getattr(event, 'agent_id', None)),
-                "topic": getattr(event, 'topic', None)
-            }, default=str))
-            
             event.process(self)
             
             # ИСПРАВЛЕНИЕ: Определяем agent_id и trend_id на основе типа события
@@ -687,15 +611,6 @@ class SimulationEngine:
             if topic:
                 # Используем предрассчитанный временной слот
                 delay = time_slots[i] if i < len(time_slots) else random.uniform(1.0, 60.0)
-                
-                logger.info(json.dumps({
-                    "event": "creating_seed_action",
-                    "agent_id": str(agent.id),
-                    "topic": topic,
-                    "delay": delay,
-                    "timestamp": self.current_time + delay,
-                    "current_time": self.current_time
-                }, default=str))
                 
                 action_event = PublishPostAction(
                     agent_id=agent.id,
@@ -881,7 +796,7 @@ class SimulationEngine:
                 
             # Проверяем кулдаун агента (снижено до 15 минут в v1.8)
             last_action_time = self._agent_action_cooldowns.get(agent.id, 0)
-            if self.current_time - last_action_time < 10.0:  # Снижено с 15 до 10 минут
+            if self.current_time - last_action_time < 15.0:
                 continue
                 
             eligible_agents.append(agent)
@@ -1004,16 +919,6 @@ class SimulationEngine:
             priority: Приоритет события (1-5)
             timestamp: Время выполнения
         """
-        logger.info(json.dumps({
-            "event": "adding_event_to_queue",
-            "event_type": event.__class__.__name__,
-            "priority": priority,
-            "timestamp": timestamp,
-            "agent_id": str(getattr(event, 'agent_id', None)),
-            "topic": getattr(event, 'topic', None),
-            "queue_size_before": len(self.event_queue)
-        }, default=str))
-        
         priority_event = PriorityEvent(priority, timestamp, event)
         heapq.heappush(self.event_queue, priority_event)
         
@@ -1066,24 +971,23 @@ class SimulationEngine:
                 trend_updates = [u for u in self._batch_updates if u.get("type") == "trend_interaction"]
                 trend_creations = [u for u in self._batch_updates if u.get("type") == "trend_creation"]
                 
-                # ИСПРАВЛЕНИЕ: Сохранить записи истории атрибутов пакетом
+                # ИСПРАВЛЕНИЕ: Сохранить записи истории атрибутов
                 if history_records:
                     from ..db.models import PersonAttributeHistory
-                    history_models = [
-                        PersonAttributeHistory(
-                            person_id=hr["person_id"],
-                            simulation_id=hr["simulation_id"],
-                            attribute_name=hr["attribute_name"],
-                            old_value=hr["old_value"],
-                            new_value=hr["new_value"],
-                            delta=hr["delta"],
-                            reason=hr["reason"],
-                            source_trend_id=hr.get("source_trend_id"),
-                            change_timestamp=hr["change_timestamp"],
+                    for history_data in history_records:
+                        # Создаем DB модель истории атрибутов
+                        db_history = PersonAttributeHistory(
+                            person_id=history_data["person_id"],
+                            simulation_id=history_data["simulation_id"],
+                            attribute_name=history_data["attribute_name"],
+                            old_value=history_data["old_value"],
+                            new_value=history_data["new_value"],
+                            delta=history_data["delta"],
+                            reason=history_data["reason"],
+                            source_trend_id=history_data.get("source_trend_id"),
+                            change_timestamp=history_data["change_timestamp"]
                         )
-                        for hr in history_records
-                    ]
-                    await self.db_repo.bulk_create_person_attribute_history(history_models)
+                        await self.db_repo.create_person_attribute_history(db_history)
                 
                 # ИСПРАВЛЕНИЕ: Обновить состояния агентов
                 if person_updates:

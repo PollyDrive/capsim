@@ -22,9 +22,8 @@ class EventPriority(IntEnum):
     SYSTEM = 100       # DailyResetEvent, EnergyRecoveryEvent - highest priority
     AGENT_ACTION = 50  # PublishPost, Purchase, SelfDev actions
     TREND = 30         # TrendInfluenceEvent - social influence processing
-    ENERGY_RECOVERY = 20  # EnergyRecoveryEvent - lower priority than agent actions
-    LAW = 15           # LawEvent - external law changes
-    WEATHER = 10       # WeatherEvent - external weather changes
+    LAW = 20           # LawEvent - external law changes
+    WEATHER = 15       # WeatherEvent - external weather changes
     LOW = 0            # Default/fallback priority
 
 
@@ -89,16 +88,13 @@ class PublishPostAction(BaseEvent):
             return
             
         # Проверить возможность действия
-        if not agent.can_perform_action("PublishPostAction", current_time=self.timestamp):
+        if not agent.can_perform_action("PublishPostAction"):
             logger.info(json.dumps({
                 "event": "action_rejected",
                 "agent_id": str(self.agent_id),
                 "reason": "insufficient_resources",
                 "energy": agent.energy_level,
-                "time_budget": agent.time_budget,
-                "trend_receptivity": agent.trend_receptivity,
-                "timestamp": self.timestamp,
-                "day_time": self.timestamp % 1440
+                "time_budget": agent.time_budget
             }, default=str))
             return
             
@@ -117,13 +113,13 @@ class PublishPostAction(BaseEvent):
             0.5  # Базовый минимум
         )
         
-        # Уровень охвата теперь зависит от социального статуса (v1.10 tweak)
-        if agent.social_status >= 4.0:
+        # Уровень охвата зависит от финансовых возможностей
+        if agent.financial_capability >= 4.0:
             coverage = CoverageLevel.HIGH.value
-        elif agent.social_status < 1.5:  # Low при низком статусе
+        elif agent.social_status < 1.5:  # ИСПРАВЛЕНИЕ: Low только при низком социальном статусе
             coverage = CoverageLevel.LOW.value
         else:
-            coverage = CoverageLevel.MIDDLE.value  # Middle по умолчанию
+            coverage = CoverageLevel.MIDDLE.value  # ИСПРАВЛЕНИЕ: Middle по умолчанию
             
         # ИСПРАВЛЕНИЕ: Проверяем является ли это ответом на существующий тренд
         parent_trend_id = None
@@ -223,7 +219,7 @@ class EnergyRecoveryEvent(BaseEvent):
     """Event для восстановления энергии агентов."""
     
     def __init__(self, timestamp: float):
-        super().__init__(EventPriority.ENERGY_RECOVERY, timestamp)
+        super().__init__(EventPriority.SYSTEM, timestamp)
     
     def process(self, engine: "SimulationEngine") -> None:
         """Execute energy recovery for all agents."""
@@ -236,104 +232,13 @@ class EnergyRecoveryEvent(BaseEvent):
                 agent.energy_level = min(5, agent.energy_level + recovery_amount)
                 self.recovered_agent_ids.append(str(agent.id))
         next = EnergyRecoveryEvent(self.timestamp + 5)
-        engine.add_event(next, EventPriority.ENERGY_RECOVERY, next.timestamp)
+        engine.add_event(next, EventPriority.SYSTEM, next.timestamp)
         
         logger.info(json.dumps({
             "event": "energy_recovery_completed",
             "updated_agents": len(engine.agents),
             "recovery_amount": recovery_amount,
             "recovered_agents": len(self.recovered_agent_ids),
-            "timestamp": self.timestamp
-        }, default=str))
-
-
-# ---------------- v1.9 DAILY CYCLE ----------------
-
-
-class NightCycleEvent(BaseEvent):
-    """Marks the start of nightly inactivity period (00:00-08:00). Purely logging for now."""
-
-    def __init__(self, timestamp: float):
-        super().__init__(EventPriority.SYSTEM, timestamp)
-
-    def process(self, engine: "SimulationEngine") -> None:
-        # Schedule next night cycle in 24h
-        next_night = NightCycleEvent(self.timestamp + 1440.0)
-        engine.add_event(next_night, EventPriority.SYSTEM, next_night.timestamp)
-
-        logger.info(json.dumps({
-            "event": "night_cycle_start",
-            "timestamp": self.timestamp
-        }, default=str))
-
-
-class MorningRecoveryEvent(BaseEvent):
-    """Restores energy & finances at 08:00 each day."""
-
-    def __init__(self, timestamp: float):
-        super().__init__(EventPriority.SYSTEM, timestamp)
-
-    def process(self, engine: "SimulationEngine") -> None:
-        from capsim.common.settings import action_config as _ac
-
-        energy_bonus = _ac.night_recovery["energy_bonus"] if hasattr(_ac, "night_recovery") else 1.2
-        financial_bonus = _ac.night_recovery["financial_bonus"] if hasattr(_ac, "night_recovery") else 1.0
-
-        recovered = 0
-        for agent in engine.agents:
-            changes: dict[str, float] = {}
-
-            if agent.energy_level < 5.0:
-                delta_e = min(5.0, agent.energy_level + energy_bonus) - agent.energy_level
-                if delta_e:
-                    changes["energy_level"] = delta_e
-
-            if agent.financial_capability < 5.0:
-                delta_f = min(5.0, agent.financial_capability + financial_bonus) - agent.financial_capability
-                if delta_f:
-                    changes["financial_capability"] = delta_f
-
-            if not changes:
-                continue
-
-            # Apply effects
-            agent.apply_effects(changes)
-
-            # Batch person_state update
-            update = {
-                "type": "person_state",
-                "id": agent.id,
-                "reason": "MorningRecovery",
-                "timestamp": self.timestamp,
-            }
-            update.update({k: getattr(agent, k) for k in changes.keys()})
-            engine.add_to_batch_update(update)
-
-            # Add attribute_history for each change
-            for attr, delta in changes.items():
-                engine.add_to_batch_update({
-                    "type": "attribute_history",
-                    "person_id": agent.id,
-                    "simulation_id": engine.simulation_id,
-                    "attribute_name": attr,
-                    "old_value": getattr(agent, attr) - delta,
-                    "new_value": getattr(agent, attr),
-                    "delta": delta,
-                    "reason": "MorningRecovery",
-                    "source_trend_id": None,
-                    "change_timestamp": self.timestamp
-                })
-            recovered += 1
-
-        # Schedule next morning recovery in 24h
-        next_morning = MorningRecoveryEvent(self.timestamp + 1440.0)
-        engine.add_event(next_morning, EventPriority.SYSTEM, next_morning.timestamp)
-
-        logger.info(json.dumps({
-            "event": "morning_recovery_completed",
-            "recovered_agents": recovered,
-            "energy_bonus": energy_bonus,
-            "financial_bonus": financial_bonus,
             "timestamp": self.timestamp
         }, default=str))
 

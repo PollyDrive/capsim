@@ -1,7 +1,6 @@
 .PHONY: help dev-up dev-down test lint bootstrap clean docker-build
 
 include .env.local
--include .env.local
 -include env.local.md
 export
 
@@ -189,7 +188,7 @@ grafana-reload:
 # Performance Tuning Targets
 setup-macos-monitoring:
 	@echo "🚀 Setting up macOS monitoring for performance tuning..."
-	bash scripts/setup_macos_exporter.sh
+	./scripts/setup_macos_exporter.sh
 
 performance-baseline:
 	@echo "📊 Establishing performance baseline..."
