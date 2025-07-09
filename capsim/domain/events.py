@@ -458,7 +458,59 @@ class TrendInfluenceEvent(BaseEvent):
     def __init__(self, timestamp: float, trend_id: UUID):
         super().__init__(EventPriority.TREND, timestamp)
         self.trend_id = trend_id
-        
+
+    # -------------------- v1.9 helpers --------------------
+    @staticmethod
+    def _calculate_reader_effects(sentiment: str, aligned: bool) -> dict[str, float]:
+        """Return attribute deltas based on sentiment matrix from tech_v1.9."""
+        # Восприимчивость (trend_receptivity)
+        receptivity_delta = 0.01 if (aligned or sentiment == "Negative") else 0.0
+
+        # Энергия
+        if sentiment == "Positive":
+            energy_delta = 0.02 if aligned else 0.015
+        else:  # Negative
+            energy_delta = -0.015 if aligned else -0.01
+
+        return {
+            "trend_receptivity": receptivity_delta,
+            "energy_level": energy_delta,
+        }
+
+    # v1.9: aggregated effect for the author (PostEffect)
+    @staticmethod
+    def _calculate_author_post_effect(author_id: UUID, trend: "Trend", audience_updates: list[dict], event_timestamp: float) -> dict:
+        """Compute social_status delta for the author based on audience reaction.
+
+        Implementation follows tech_v1.9 spec (log-scaled reach, sentiment multiplier, clamped −1..1).
+        Returns UpdateState-like dict ready for engine._process_update_state_batch.
+        """
+        import math
+
+        total_reach = len(audience_updates)
+        if total_reach == 0:
+            return {}
+
+        # Sum of energy deltas applied to audience (positive or negative)
+        total_energy_change = sum(
+            upd["attribute_changes"].get("energy_level", 0.0) for upd in audience_updates
+        )
+
+        reach_multiplier = math.log(total_reach + 1, 10)  # log base 10
+        sentiment_multiplier = 1.0 if trend.sentiment == "Positive" else -1.0
+
+        post_effect_delta = (total_energy_change * reach_multiplier * sentiment_multiplier) / 50
+        # Clamp to [-1.0, 1.0]
+        post_effect_delta = max(-1.0, min(1.0, post_effect_delta))
+
+        return {
+            "agent_id": author_id,
+            "attribute_changes": {"social_status": post_effect_delta},
+            "reason": "PostEffect",
+            "source_trend_id": trend.trend_id,
+            "timestamp": event_timestamp,
+        }
+    
     def process(self, engine: "SimulationEngine") -> None:
         """
         Обрабатывает распространение влияния тренда через пакеты updatestate.
@@ -492,7 +544,7 @@ class TrendInfluenceEvent(BaseEvent):
             }, default=str))
             return
             
-        # Рассчитываем параметры влияния
+        # Рассчитываем параметры влияния (оставляем существующую вероятностную модель)
         current_virality = trend.calculate_current_virality()
         coverage_factor = trend.get_coverage_factor()
         
@@ -517,17 +569,25 @@ class TrendInfluenceEvent(BaseEvent):
             
             import random
             if random.random() < influence_probability:
-                # Рассчитываем силу влияния
-                influence_strength = min(0.5, current_virality * 0.2)  # ИСПРАВЛЕНИЕ: Увеличиваем силу влияния
-                
+                # Определяем соответствие интересов
+                from capsim.common.topic_mapping import topic_to_interest_category
+                try:
+                    interest_category = topic_to_interest_category(trend.topic)
+                except KeyError:
+                    interest_category = None
+
+                aligned = False
+                if interest_category:
+                    interest_value = agent.interests.get(interest_category, 0.0)
+                    aligned = interest_value > 3.0
+
+                # Рассчитываем дельты по новой матрице
+                attribute_changes = self._calculate_reader_effects(trend.sentiment, aligned)
+
                 # Создаем пакет updatestate для агента
                 update_state = {
                     "agent_id": agent.id,
-                    "attribute_changes": {
-                        "trend_receptivity": influence_strength * 0.2,
-                        "social_status": influence_strength * 0.1,
-                        "energy_level": -0.01  # ИСПРАВЛЕНИЕ: снижаем усталость от просмотра до 0.01
-                    },
+                    "attribute_changes": attribute_changes,
                     "reason": "TrendInfluence",
                     "source_trend_id": trend.trend_id,
                     "timestamp": self.timestamp
@@ -535,7 +595,7 @@ class TrendInfluenceEvent(BaseEvent):
                 update_state_batch.append(update_state)
                 
                 # Применяем изменения к агенту
-                agent.update_state(update_state["attribute_changes"])
+                agent.update_state(attribute_changes)
                 
                 # Добавляем взаимодействие с трендом
                 trend.add_interaction()
@@ -553,10 +613,9 @@ class TrendInfluenceEvent(BaseEvent):
                 agent.exposure_history[str(trend.trend_id)] = self.timestamp
                 
                 # Проверяем возможность создания ответного действия
+                # Вероятность ответа оставляем прежней
                 response_probability = (
-                    influence_strength * 
-                    agent.social_status / 5.0 * 
-                    1.2  # ИСПРАВЛЕНИЕ: Удваиваем базовую вероятность ответа с 0.6 до 1.2
+                    current_virality / 5.0 * agent.social_status / 5.0 * 1.2
                 )
                 
                 if (random.random() < response_probability and 
@@ -581,7 +640,17 @@ class TrendInfluenceEvent(BaseEvent):
                     # ИСПРАВЛЕНИЕ: Увеличиваем total_interactions у родительского тренда
                     trend.add_interaction()
         
-        # Пакетная обработка updatestate
+        # --------------- PostEffect для автора ----------------
+        author_effect_update = self._calculate_author_post_effect(trend.originator_id, trend, update_state_batch, self.timestamp)
+        if author_effect_update:
+            # Применяем изменения к автору в памяти
+            author = next((a for a in engine.agents if a.id == trend.originator_id), None)
+            if author:
+                author.update_state(author_effect_update["attribute_changes"])
+
+            update_state_batch.append(author_effect_update)
+
+        # Пакетная обработка updatestate (читатели + автор)
         if update_state_batch:
             engine._process_update_state_batch(update_state_batch)
             
@@ -600,6 +669,8 @@ class TrendInfluenceEvent(BaseEvent):
             "event": "trend_influence_processed",
             "trend_id": str(self.trend_id),
             "influenced_agents": influenced_agents,
+            "author_post_effect_applied": bool(author_effect_update),
+            "post_effect_delta": author_effect_update.get("attribute_changes", {}).get("social_status") if author_effect_update else 0.0,
             "update_states_created": len(update_state_batch),
             "new_actions_scheduled": len(new_actions_batch),
             "total_interactions": trend.total_interactions,

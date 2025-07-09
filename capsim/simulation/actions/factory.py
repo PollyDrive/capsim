@@ -63,13 +63,9 @@ class PostAction(BaseAction):
     
     def execute(self, person: "Person", engine: "SimulationEngine") -> None:
         """Выполнить публикацию поста."""
-        from capsim.common.settings import action_config
         from capsim.domain.events import PublishPostAction
         from capsim.common.metrics import record_action
-        
-        # НЕМЕДЛЕННО применяем эффекты к агенту
-        effects = action_config.effects["POST"]
-        person.apply_effects(effects)
+        # v1.9: мгновенных эффектов на автора больше нет
         person.last_post_ts = engine.current_time
         
         # Выбираем лучшую тему для поста
@@ -94,9 +90,7 @@ class PostAction(BaseAction):
             "event": "post_action_executed",
             "agent_id": str(person.id),
             "profession": person.profession,
-            "timestamp": engine.current_time,
-            "energy_after": person.energy_level,
-            "time_budget_after": person.time_budget
+            "timestamp": engine.current_time
         }))
         
     def can_execute(self, person: "Person", current_time: float) -> bool:

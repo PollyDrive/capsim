@@ -64,7 +64,7 @@
 
 **Новый метод:**
 
-`pythondef calculate_author_post_effect(self, author: Person, trend: Trend, audience_effects: List[StateUpdate]) -> StateUpdate:
+`def calculate_author_post_effect(self, author: Person, trend: Trend, audience_effects: List[StateUpdate]) -> StateUpdate:
     total_reach = len(audience_effects)
     total_energy_change = sum(effect.attributechanges.get("energylevel", {}).get("delta", 0) 
                              for effect in audience_effects)
