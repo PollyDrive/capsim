@@ -6,7 +6,7 @@ COOLDOWNS:
   SELF_DEV_MIN: 30  # v1.9 spec
 
 LIMITS:
-  MAX_PURCHASES_DAY: 5  # Maximum purchases per agent per day
+  MAX_PURCHASES_DAY: 8  # Increased to stimulate more purchase actions
 
 EFFECTS:
   POST:
@@ -34,6 +34,11 @@ EFFECTS:
       energy_level: 0.70
       time_budget: -0.10
       social_status: 0.20
+
+# Night recovery bonuses (v1.9 daily cycle)
+NIGHT_RECOVERY:
+  energy_bonus: 1.2
+  financial_bonus: 1.0
 
 SHOP_WEIGHTS:
   Businessman: 1.20

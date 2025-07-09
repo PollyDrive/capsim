@@ -33,6 +33,7 @@ class ActionConfig:
             self.limits = config_data.get('LIMITS', {})
             self.effects = config_data.get('EFFECTS', {})
             self.shop_weights = config_data.get('SHOP_WEIGHTS', {})
+            self.night_recovery = config_data.get('NIGHT_RECOVERY', {"energy_bonus":1.2, "financial_bonus":1.0})
             
             logger.info(f"✅ ActionConfig loaded from {config_path}")
             
@@ -93,6 +94,7 @@ class ActionConfig:
             "Philosopher": 0.75,
             "Unemployed": 0.60
         }
+        self.night_recovery = {"energy_bonus":1.2, "financial_bonus":1.0}
 
 
 class Settings:
