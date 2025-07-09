@@ -44,7 +44,7 @@ class PriorityEvent:
     event: BaseEvent
     
     def __lt__(self, other):
-        """Priority comparison for heapq."""
+        """Priority comparison for heapq (priority first)."""
         if self.priority != other.priority:
             return self.priority < other.priority
         return self.timestamp < other.timestamp
@@ -514,6 +514,7 @@ class SimulationEngine:
                     "topic": getattr(event, 'topic', None),
                     "law_type": getattr(event, 'law_type', None),
                     "weather_type": getattr(event, 'weather_type', None),
+                    "recovered_agents": getattr(event, 'recovered_agent_ids', None),
                     "event_id": str(event.event_id),
                     "sim_time": event.timestamp,
                     "real_time": event.timestamp_real
@@ -677,7 +678,7 @@ class SimulationEngine:
                     new_value = old_value + delta
                 setattr(agent, attr_name, new_value)
                 # Логируем историю только для значимых изменений
-                if abs(delta) >= 0.05:
+                if abs(delta) >= 0.01:
                     history_record = {
                         "type": "attribute_history",
                         "person_id": agent_id,

@@ -226,8 +226,11 @@ class Person:
             return False
         
         # Более мягкие финансовые требования
-        required_capability = abs(action_config.effects["PURCHASE"][level]["financial_capability"])
-        return self.financial_capability >= required_capability * 0.8  # 80% от требуемого
+        # v1.9: используем минимальную стоимость из диапазона cost_range
+        cost_range = action_config.effects["PURCHASE"][level]["cost_range"]
+        max_cost = cost_range[1]
+        required_capability = max_cost  # требуемо покрыть максимальную стоимость
+        return self.financial_capability >= required_capability * 0.8  # 80% от макс стоимости
         
     def get_interest_in_topic(self, topic: str) -> float:
         """

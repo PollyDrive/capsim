@@ -167,11 +167,13 @@ class PublishPostAction(BaseEvent):
             "timestamp": self.timestamp
         })
         
-        # Обновить состояние агента
+        # v1.9 immediate costs from action config (energy/time) + small social bonus
+        from capsim.common.settings import action_config as _ac
+        post_cfg = _ac.effects["POST"]
         agent.update_state({
-            "energy_level": -0.1,  # ИСПРАВЛЕНИЕ: увеличиваем трату энергии до 0.1
-            "time_budget": -0.1,     # Тратим время
-            "social_status": 0.1   # Небольшой прирост статуса от публикации
+            "energy_level": post_cfg["energy_level"],
+            "time_budget": post_cfg["time_budget"],
+            "social_status": post_cfg.get("social_status", 0.0)
         })
         
         # v1.8: Обновить атрибуты отслеживания действий
@@ -221,17 +223,22 @@ class EnergyRecoveryEvent(BaseEvent):
     
     def process(self, engine: "SimulationEngine") -> None:
         """Execute energy recovery for all agents."""
-        recovery_amount = 1.0
+        # v1.9: passive recovery rebalance — 0.12 every 5 sim-minutes
+        recovery_amount = 0.12
+        self.recovered_agent_ids: list[str] = []  # For logging into events table
+
         for agent in engine.agents:
             if agent.energy_level < 5:
-                agent.energy_level = min(5, agent.energy_level + 1)
-        next = EnergyRecoveryEvent(self.timestamp + 60)
+                agent.energy_level = min(5, agent.energy_level + recovery_amount)
+                self.recovered_agent_ids.append(str(agent.id))
+        next = EnergyRecoveryEvent(self.timestamp + 5)
         engine.add_event(next, EventPriority.SYSTEM, next.timestamp)
         
         logger.info(json.dumps({
             "event": "energy_recovery_completed",
             "updated_agents": len(engine.agents),
             "recovery_amount": recovery_amount,
+            "recovered_agents": len(self.recovered_agent_ids),
             "timestamp": self.timestamp
         }, default=str))
 
@@ -287,8 +294,22 @@ class PurchaseAction(BaseEvent):
         if not agent:
             return
             
-        # Apply purchase effects
-        effects = action_config.effects["PURCHASE"][self.purchase_level]
+        import random
+        cfg = action_config.effects["PURCHASE"][self.purchase_level]
+
+        # Random cost within configured range
+        cost_range = cfg["cost_range"]
+        spend = random.uniform(cost_range[0], cost_range[1])
+
+        # Build dynamic effects dict
+        effects = {
+            "financial_capability": -spend,
+            "energy_level": cfg.get("energy_level", 0.0),
+            "time_budget": cfg.get("time_budget", 0.0),
+        }
+        if "social_status" in cfg:
+            effects["social_status"] = cfg["social_status"]
+
         agent.apply_effects(effects)
         
         # Update v1.8 tracking attributes
