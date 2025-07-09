@@ -73,17 +73,17 @@ class Person:
         Returns:
             Тип действия или None если агент не активен
         """
-        if not self.can_perform_action("any"):
+        if not self.can_perform_action("any", current_time=context.current_time):
             return None
             
-        # Получаем threshold из ENV
-        threshold = float(os.getenv("DECIDE_SCORE_THRESHOLD", "0.4"))
+        # Получаем threshold из ENV (снижен для более активных агентов)
+        threshold = float(os.getenv("DECIDE_SCORE_THRESHOLD", "0.15"))  # Снижен с 0.4 до 0.15
         
         # Проверяем доступные действия и их приоритеты
         possible_actions = ["PublishPostAction"]
         
         for action_type in possible_actions:
-            if not self.can_perform_action(action_type):
+            if not self.can_perform_action(action_type, current_time=context.current_time):
                 continue
                 
             # Выбираем тему на основе интересов и склонностей
@@ -94,12 +94,13 @@ class Person:
             interest_score = self.get_interest_in_topic(best_topic)
             affinity_score = self.get_affinity_for_topic(best_topic)
             
-            # Формула принятия решения
+            # Формула принятия решения (улучшенная)
             score = (
-                0.5 * interest_score / 5.0 +
-                0.3 * self.social_status / 5.0 +
-                0.2 * random.random()
-            ) * affinity_score / 5.0
+                0.4 * interest_score / 5.0 +        # Интерес к теме
+                0.3 * self.social_status / 5.0 +    # Социальный статус
+                0.2 * self.trend_receptivity / 5.0 + # Восприимчивость к трендам
+                0.1 * random.random()                # Случайность
+            ) * (affinity_score / 5.0) + 0.1         # Бонус за склонность + базовый бонус
             
             if score >= threshold:
                 return action_type
@@ -139,7 +140,7 @@ class Person:
                     
                 setattr(self, attribute, new_value)
         
-    def can_perform_action(self, action_type: str) -> bool:
+    def can_perform_action(self, action_type: str, current_time: float | None = None) -> bool:
         """
         Проверяет возможность выполнения действия.
         
@@ -190,6 +191,11 @@ class Person:
     def can_post(self, current_time: float) -> bool:
         """Проверяет возможность публикации поста (cooldown + ресурсы)."""
         from capsim.common.settings import action_config
+
+        # Блок действий в ночное время
+        day_time = current_time % 1440
+        if 0 <= day_time < 480:
+            return False
         
         # Проверка cooldown (сокращенный cooldown)
         if self.last_post_ts is not None:
@@ -206,6 +212,10 @@ class Person:
     def can_self_dev(self, current_time: float) -> bool:
         """Проверяет возможность саморазвития (cooldown + ресурсы)."""
         from capsim.common.settings import action_config
+
+        day_time = current_time % 1440
+        if 0 <= day_time < 480:
+            return False
         
         # Проверка cooldown (сокращенный)
         if self.last_selfdev_ts is not None:
@@ -219,6 +229,10 @@ class Person:
     def can_purchase(self, current_time: float, level: str) -> bool:
         """Проверяет возможность покупки определенного уровня."""
         from capsim.common.settings import action_config
+
+        day_time = current_time % 1440
+        if 0 <= day_time < 480:
+            return False
         
         # Проверка дневного лимита (увеличенного)
         max_purchases = action_config.limits["MAX_PURCHASES_DAY"] * 2  # Удваиваем лимит
