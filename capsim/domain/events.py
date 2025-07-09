@@ -163,6 +163,7 @@ class PublishPostAction(BaseEvent):
             "originator_id": new_trend.originator_id,
             "base_virality_score": new_trend.base_virality_score,
             "coverage_level": new_trend.coverage_level,
+            "sentiment": new_trend.sentiment,
             "timestamp": self.timestamp
         })
         

@@ -1039,7 +1039,8 @@ class SimulationEngine:
                             topic=trend_data["topic"],
                             originator_id=trend_data["originator_id"],
                             base_virality_score=trend_data["base_virality_score"],
-                            coverage_level=trend_data["coverage_level"]
+                            coverage_level=trend_data["coverage_level"],
+                            sentiment=trend_data["sentiment"],
                         )
                         await self.db_repo.create_trend(db_trend)
                 

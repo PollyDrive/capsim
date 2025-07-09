@@ -28,6 +28,12 @@ class TrendTopic(Enum):
     SPORT = "Sport"
 
 
+class Sentiment(Enum):
+    """Тональность тренда."""
+    POSITIVE = "Positive"
+    NEGATIVE = "Negative"
+
+
 @dataclass
 class Trend:
     """
@@ -52,10 +58,21 @@ class Trend:
     base_virality_score: float = 0.0  # 0.0-5.0 scale
     coverage_level: str = CoverageLevel.LOW.value
     total_interactions: int = 0
+
+    # v1.9 sentiment
+    sentiment: str = Sentiment.POSITIVE.value  # "Positive" | "Negative"
     
     # Simulation metadata
     simulation_id: UUID = field(default_factory=uuid4)
-    
+
+    # ------------------------------
+    # Dataclass hooks / validation
+    # ------------------------------
+
+    def __post_init__(self):
+        if self.sentiment not in (Sentiment.POSITIVE.value, Sentiment.NEGATIVE.value):
+            raise ValueError(f"Invalid sentiment '{self.sentiment}'. Must be 'Positive' or 'Negative'.")
+        
     def calculate_current_virality(self) -> float:
         """
         Рассчитывает текущую виральность с учетом взаимодействий.
@@ -113,7 +130,8 @@ class Trend:
         simulation_id: UUID,
         base_virality: float,
         coverage_level: str = CoverageLevel.LOW.value,
-        parent_id: Optional[UUID] = None
+        parent_id: Optional[UUID] = None,
+        *, sentiment: str | None = None
     ) -> "Trend":
         """
         Создает новый тренд из действия агента.
@@ -129,11 +147,20 @@ class Trend:
         Returns:
             Новый экземпляр Trend
         """
+        import random
+
+        sentiment_val = (
+            sentiment
+            if sentiment in (Sentiment.POSITIVE.value, Sentiment.NEGATIVE.value)
+            else random.choice([Sentiment.POSITIVE.value, Sentiment.NEGATIVE.value])
+        )
+
         return cls(
             topic=topic,
             originator_id=originator_id,
             simulation_id=simulation_id,
             base_virality_score=base_virality,
             coverage_level=coverage_level,
-            parent_trend_id=parent_id
+            parent_trend_id=parent_id,
+            sentiment=sentiment_val
         ) 

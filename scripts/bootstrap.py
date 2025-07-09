@@ -195,6 +195,7 @@ class CapsimBootstrap:
                 base_virality_score FLOAT,
                 coverage_level VARCHAR(20),
                 total_interactions INTEGER,
+                sentiment VARCHAR(10) DEFAULT 'Positive',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """,

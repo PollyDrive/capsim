@@ -99,6 +99,9 @@ class Trend(Base):
     base_virality_score = Column(Float, default=0.0)  # 0.0-5.0 scale
     coverage_level = Column(String(20), default="Low")  # Low/Middle/High
     total_interactions = Column(Integer, default=0)
+
+    # v1.9 sentiment
+    sentiment = Column(String(10), default="Positive", nullable=False)
     
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
