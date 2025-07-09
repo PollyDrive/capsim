@@ -44,9 +44,6 @@ async def run_simulation_cli(
     print(f"⚡ Скорость симуляции: {sim_speed_factor}x")
     
     # Проверяем доступность зависимостей
-    # Устанавливаем SIM_SPEED_FACTOR ПЕРЕД импортом движка, чтобы settings подтянули корректное значение
-    os.environ["SIM_SPEED_FACTOR"] = str(sim_speed_factor)
-
     try:
         from ..engine.simulation_engine import SimulationEngine
         from ..db.repositories import DatabaseRepository as _RealRepository
@@ -63,7 +60,8 @@ async def run_simulation_cli(
     print(f"🗄️  База данных: {database_url}")
     
     try:
-        # SIM_SPEED_FACTOR уже установлен выше
+        # Устанавливаем SIM_SPEED_FACTOR в настройки
+        os.environ["SIM_SPEED_FACTOR"] = str(sim_speed_factor)
         
         # Подмена репозитория на in-memory в тестовом режиме
         if database_url and database_url.startswith("sqlite+aiosqlite"):  # тестовый режим

@@ -311,13 +311,6 @@ class DatabaseRepository:
             session.add(history_record)
             await session.commit()
             
-    async def bulk_create_person_attribute_history(self, history_records: List["PersonAttributeHistory"]) -> None:
-        """Bulk create person attribute history records in a single transaction to avoid connection explosion."""
-        async with self.SessionLocal() as session:
-            # Add all records in one batch and commit once
-            session.add_all(history_records)
-            await session.commit()
-            
     async def bulk_create_persons(self, persons: List["Person"]) -> None:
         """Bulk create persons (now global)."""
         async with self.SessionLocal() as session:
