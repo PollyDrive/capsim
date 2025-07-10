@@ -65,19 +65,24 @@ class PostAction(BaseAction):
         """Выполнить публикацию поста."""
         from capsim.domain.events import PublishPostAction
         from capsim.common.metrics import record_action
-        # v1.9: мгновенных эффектов на автора больше нет
-        person.last_post_ts = engine.current_time
+        
+        # ИСПРАВЛЕНИЕ: НЕ применяем эффекты сразу - только планируем событие
+        # Эффекты будут применены при обработке события
         
         # Выбираем лучшую тему для поста
         best_topic = "ECONOMIC"  # Дефолт
         if hasattr(person, 'interests') and person.interests:
             best_topic = max(person.interests.keys(), key=lambda t: person.interests[t]).upper()
         
+        # ИСПРАВЛЕНИЕ: Добавляем небольшую задержку для предотвращения зависания времени
+        import random
+        delay = random.uniform(0.1, 2.0)  # Случайная задержка от 0.1 до 2 минут
+        
         # Создаем событие публикации поста
         post_event = PublishPostAction(
             agent_id=person.id,
             topic=best_topic,
-            timestamp=engine.current_time
+            timestamp=engine.current_time + delay
         )
         
         # Добавляем событие в очередь
@@ -87,10 +92,11 @@ class PostAction(BaseAction):
         record_action("Post", "", person.profession)
         
         logger.info(json.dumps({
-            "event": "post_action_executed",
+            "event": "post_action_scheduled",
             "agent_id": str(person.id),
             "profession": person.profession,
-            "timestamp": engine.current_time
+            "timestamp": engine.current_time,
+            "scheduled_for": engine.current_time + delay
         }))
         
     def can_execute(self, person: "Person", current_time: float) -> bool:
@@ -107,19 +113,18 @@ class PurchaseL1Action(BaseAction):
         from capsim.common.metrics import record_action
         from capsim.domain.events import PurchaseAction
         
-        # НЕМЕДЛЕННО применяем эффекты покупки L1
-        effects = action_config.effects["PURCHASE"]["L1"]
-        person.apply_effects(effects)
-        person.purchases_today += 1
-        if not hasattr(person, 'last_purchase_ts') or person.last_purchase_ts is None:
-            person.last_purchase_ts = {}
-        person.last_purchase_ts["L1"] = engine.current_time
+        # ИСПРАВЛЕНИЕ: НЕ применяем эффекты сразу - только планируем событие
+        # Эффекты будут применены при обработке события
+        
+        # ИСПРАВЛЕНИЕ: Добавляем небольшую задержку для предотвращения зависания времени
+        import random
+        delay = random.uniform(0.1, 1.2)  # Случайная задержка от 0.1 до 1.2 минут
         
         # Создаем событие покупки L1
         purchase_event = PurchaseAction(
             agent_id=person.id,
             purchase_level="L1",
-            timestamp=engine.current_time
+            timestamp=engine.current_time + delay
         )
         
         # Добавляем событие в очередь
@@ -132,7 +137,8 @@ class PurchaseL1Action(BaseAction):
             "event": "purchase_l1_scheduled",
             "agent_id": str(person.id),
             "profession": person.profession,
-            "timestamp": engine.current_time
+            "timestamp": engine.current_time,
+            "scheduled_for": engine.current_time + delay
         }))
         
     def can_execute(self, person: "Person", current_time: float) -> bool:
@@ -149,19 +155,18 @@ class PurchaseL2Action(BaseAction):
         from capsim.common.metrics import record_action
         from capsim.domain.events import PurchaseAction
         
-        # НЕМЕДЛЕННО применяем эффекты покупки L2
-        effects = action_config.effects["PURCHASE"]["L2"]
-        person.apply_effects(effects)
-        person.purchases_today += 1
-        if not hasattr(person, 'last_purchase_ts') or person.last_purchase_ts is None:
-            person.last_purchase_ts = {}
-        person.last_purchase_ts["L2"] = engine.current_time
+        # ИСПРАВЛЕНИЕ: НЕ применяем эффекты сразу - только планируем событие
+        # Эффекты будут применены при обработке события
+        
+        # ИСПРАВЛЕНИЕ: Добавляем небольшую задержку для предотвращения зависания времени
+        import random
+        delay = random.uniform(0.1, 1.2)  # Случайная задержка от 0.1 до 1.2 минут
         
         # Создаем событие покупки L2
         purchase_event = PurchaseAction(
             agent_id=person.id,
             purchase_level="L2",
-            timestamp=engine.current_time
+            timestamp=engine.current_time + delay
         )
         
         # Добавляем событие в очередь
@@ -174,7 +179,8 @@ class PurchaseL2Action(BaseAction):
             "event": "purchase_l2_scheduled",
             "agent_id": str(person.id),
             "profession": person.profession,
-            "timestamp": engine.current_time
+            "timestamp": engine.current_time,
+            "scheduled_for": engine.current_time + delay
         }))
         
     def can_execute(self, person: "Person", current_time: float) -> bool:
@@ -191,19 +197,18 @@ class PurchaseL3Action(BaseAction):
         from capsim.common.metrics import record_action
         from capsim.domain.events import PurchaseAction
         
-        # НЕМЕДЛЕННО применяем эффекты покупки L3
-        effects = action_config.effects["PURCHASE"]["L3"]
-        person.apply_effects(effects)
-        person.purchases_today += 1
-        if not hasattr(person, 'last_purchase_ts') or person.last_purchase_ts is None:
-            person.last_purchase_ts = {}
-        person.last_purchase_ts["L3"] = engine.current_time
+        # ИСПРАВЛЕНИЕ: НЕ применяем эффекты сразу - только планируем событие
+        # Эффекты будут применены при обработке события
+        
+        # ИСПРАВЛЕНИЕ: Добавляем небольшую задержку для предотвращения зависания времени
+        import random
+        delay = random.uniform(0.1, 1.2)  # Случайная задержка от 0.1 до 1.2 минут
         
         # Создаем событие покупки L3
         purchase_event = PurchaseAction(
             agent_id=person.id,
             purchase_level="L3",
-            timestamp=engine.current_time
+            timestamp=engine.current_time + delay
         )
         
         # Добавляем событие в очередь
@@ -216,7 +221,8 @@ class PurchaseL3Action(BaseAction):
             "event": "purchase_l3_scheduled",
             "agent_id": str(person.id),
             "profession": person.profession,
-            "timestamp": engine.current_time
+            "timestamp": engine.current_time,
+            "scheduled_for": engine.current_time + delay
         }))
         
     def can_execute(self, person: "Person", current_time: float) -> bool:
@@ -233,15 +239,17 @@ class SelfDevAction(BaseAction):
         from capsim.common.metrics import record_action
         from capsim.domain.events import SelfDevAction as SelfDevEvent
         
-        # НЕМЕДЛЕННО применяем эффекты саморазвития
-        effects = action_config.effects["SELF_DEV"]
-        person.apply_effects(effects)
-        person.last_selfdev_ts = engine.current_time
+        # ИСПРАВЛЕНИЕ: НЕ применяем эффекты сразу - только планируем событие
+        # Эффекты будут применены при обработке события
+        
+        # ИСПРАВЛЕНИЕ: Добавляем небольшую задержку для предотвращения зависания времени
+        import random
+        delay = random.uniform(0.1, 1.5)  # Случайная задержка от 0.1 до 1.5 минут
         
         # Создаем событие саморазвития
         selfdev_event = SelfDevEvent(
             agent_id=person.id,
-            timestamp=engine.current_time
+            timestamp=engine.current_time + delay
         )
         
         # Добавляем событие в очередь
@@ -254,7 +262,8 @@ class SelfDevAction(BaseAction):
             "event": "selfdev_action_scheduled",
             "agent_id": str(person.id),
             "profession": person.profession,
-            "timestamp": engine.current_time
+            "timestamp": engine.current_time,
+            "scheduled_for": engine.current_time + delay
         }))
         
     def can_execute(self, person: "Person", current_time: float) -> bool:
