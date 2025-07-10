@@ -292,249 +292,123 @@ class CapsimBootstrap:
             
         print("✅ Таблицы созданы вручную")
         
-    def seed_affinity_data(self) -> None:
-        """Загрузка данных аффинити из trend_affinity.json."""
-        print("📊 Загрузка данных аффинити...")
-        
-        try:
-            # Load affinity data from JSON
-            affinity_file = "config/trend_affinity.json"
-            if not os.path.exists(affinity_file):
-                print(f"⚠️  Файл {affinity_file} не найден, создаем базовые данные")
-                self.create_basic_affinity_data()
-                return
-                
-            with open(affinity_file, 'r', encoding='utf-8') as f:
-                affinity_data = json.load(f)
-                
-            engine = create_engine(self.sync_url)
-            
-            with engine.connect() as conn:
-                # Clear existing data
-                conn.execute(text("DELETE FROM capsim.affinity_map"))
-                
-                # Insert new data
-                insert_count = 0
-                for profession, topics in affinity_data.items():
-                    for topic, score in topics.items():
-                        conn.execute(text("""
-                            INSERT INTO capsim.affinity_map (profession, topic, affinity_score)
-                            VALUES (:profession, :topic, :score)
-                        """), {
-                            "profession": profession,
-                            "topic": topic,
-                            "score": score
-                        })
-                        insert_count += 1
-                        
-                conn.commit()
-                
-            print(f"✅ Загружено {insert_count} записей аффинити")
-            
-        except Exception as e:
-            print(f"❌ Ошибка загрузки аффинити: {e}")
-            self.create_basic_affinity_data()
-            
-    def create_basic_affinity_data(self) -> None:
-        """Создание базовых данных аффинити."""
-        print("🔧 Создание базовых данных аффинити...")
+    def seed_agents_profession_table(self) -> None:
+        """Заполняет таблицу agents_profession диапазонами атрибутов согласно ТЗ v1.5."""
+        print("📊 Заполнение `agents_profession`...")
         
         engine = create_engine(self.sync_url)
         
-        # Basic affinity data
-        basic_affinity = {
-            "Teacher": {"Economic": 3.5, "Health": 4.0, "Science": 4.5},
-            "Developer": {"Economic": 4.0, "Science": 4.5, "Culture": 3.5},
-            "Worker": {"Economic": 4.5, "Sport": 3.5, "Society": 3.0},
-            "ShopClerk": {"Economic": 4.0, "Culture": 3.0, "Sport": 2.5},
-            "Businessman": {"Economic": 5.0, "Society": 3.5, "Culture": 3.0},
-            "Artist": {"Culture": 5.0, "Spiritual": 3.5, "Society": 3.0},
-            "Blogger": {"Culture": 4.5, "Society": 4.0, "Economic": 3.5},
-            "Unemployed": {"Economic": 4.5, "Society": 4.0, "Conspiracy": 3.5},
-            "SpiritualMentor": {"Spiritual": 5.0, "Health": 4.0, "Society": 3.5},
-            "Philosopher": {"Spiritual": 4.5, "Science": 4.0, "Society": 4.0},
-            "Politician": {"Society": 5.0, "Economic": 4.5, "Science": 3.0},
-            "Doctor": {"Health": 5.0, "Science": 4.5, "Economic": 3.0}
+        profession_ranges = {
+            'ShopClerk': {'financial_capability': (2, 4), 'trend_receptivity': (1, 3), 'social_status': (1, 3), 'energy_level': (2, 5), 'time_budget': (3, 5)},
+            'Worker': {'financial_capability': (2, 4), 'trend_receptivity': (1, 3), 'social_status': (1, 2), 'energy_level': (2, 5), 'time_budget': (3, 5)},
+            'Developer': {'financial_capability': (3, 5), 'trend_receptivity': (3, 5), 'social_status': (2, 4), 'energy_level': (2, 5), 'time_budget': (2, 4)},
+            'Politician': {'financial_capability': (3, 5), 'trend_receptivity': (3, 5), 'social_status': (4, 5), 'energy_level': (2, 5), 'time_budget': (2, 4)},
+            'Blogger': {'financial_capability': (2, 4), 'trend_receptivity': (4, 5), 'social_status': (3, 5), 'energy_level': (2, 5), 'time_budget': (3, 5)},
+            'Businessman': {'financial_capability': (4, 5), 'trend_receptivity': (2, 4), 'social_status': (4, 5), 'energy_level': (2, 5), 'time_budget': (2, 4)},
+            'SpiritualMentor': {'financial_capability': (1, 3), 'trend_receptivity': (2, 5), 'social_status': (2, 4), 'energy_level': (3, 5), 'time_budget': (2, 4)},
+            'Philosopher': {'financial_capability': (1, 3), 'trend_receptivity': (1, 3), 'social_status': (1, 3), 'energy_level': (2, 5), 'time_budget': (2, 4)},
+            'Unemployed': {'financial_capability': (1, 2), 'trend_receptivity': (3, 5), 'social_status': (1, 2), 'energy_level': (3, 5), 'time_budget': (3, 5)},
+            'Teacher': {'financial_capability': (1, 3), 'trend_receptivity': (1, 3), 'social_status': (2, 4), 'energy_level': (2, 5), 'time_budget': (2, 4)},
+            'Artist': {'financial_capability': (1, 3), 'trend_receptivity': (2, 4), 'social_status': (2, 4), 'energy_level': (4, 5), 'time_budget': (3, 5)},
+            'Doctor': {'financial_capability': (2, 4), 'trend_receptivity': (1, 3), 'social_status': (3, 5), 'energy_level': (2, 5), 'time_budget': (1, 2)}
         }
-        
+
         with engine.connect() as conn:
-            # Clear existing data
-            conn.execute(text("DELETE FROM capsim.affinity_map"))
+            conn.execute(text("TRUNCATE TABLE capsim.agents_profession RESTART IDENTITY CASCADE"))
             
-            # Insert basic data
-            insert_count = 0
-            for profession, topics in basic_affinity.items():
-                for topic, score in topics.items():
-                    conn.execute(text("""
-                        INSERT INTO capsim.affinity_map (profession, topic, affinity_score)
-                        VALUES (:profession, :topic, :score)
-                    """), {
-                        "profession": profession,
-                        "topic": topic,
-                        "score": score
-                    })
-                    insert_count += 1
-                    
+            insert_data = []
+            for profession, ranges in profession_ranges.items():
+                insert_data.append({
+                    "profession": profession,
+                    "financial_capability_min": ranges['financial_capability'][0], "financial_capability_max": ranges['financial_capability'][1],
+                    "trend_receptivity_min": ranges['trend_receptivity'][0], "trend_receptivity_max": ranges['trend_receptivity'][1],
+                    "social_status_min": ranges['social_status'][0], "social_status_max": ranges['social_status'][1],
+                    "energy_level_min": ranges['energy_level'][0], "energy_level_max": ranges['energy_level'][1],
+                    "time_budget_min": ranges['time_budget'][0], "time_budget_max": ranges['time_budget'][1],
+                })
+            
+            if insert_data:
+                conn.execute(text("""
+                    INSERT INTO capsim.agents_profession (
+                        profession, financial_capability_min, financial_capability_max, 
+                        trend_receptivity_min, trend_receptivity_max, social_status_min, social_status_max, 
+                        energy_level_min, energy_level_max, time_budget_min, time_budget_max
+                    ) VALUES (
+                        :profession, :financial_capability_min, :financial_capability_max, 
+                        :trend_receptivity_min, :trend_receptivity_max, :social_status_min, :social_status_max, 
+                        :energy_level_min, :energy_level_max, :time_budget_min, :time_budget_max
+                    )
+                """), insert_data)
             conn.commit()
             
-        print(f"✅ Создано {insert_count} базовых записей аффинити")
-        
-    def seed_agent_interests(self) -> None:
-        """Загрузка интересов агентов по профессиям."""
-        print("🎯 Загрузка интересов агентов...")
-        
+        print(f"✅ Заполнено {len(profession_ranges)} профессий в `agents_profession`")
+
+    def seed_affinity_map_table(self) -> None:
+        """Заполняет `affinity_map` согласно ТЗ v1.5."""
+        print("📊 Заполнение `affinity_map`...")
         engine = create_engine(self.sync_url)
-        
-        # Interest ranges by profession
-        interest_ranges = {
-            "Teacher": {"Economics": (0.3, 0.7), "Wellbeing": (0.4, 0.8), "Knowledge": (0.6, 0.9)},
-            "Developer": {"Economics": (0.4, 0.8), "Knowledge": (0.6, 0.9), "Creativity": (0.3, 0.7)},
-            "Worker": {"Economics": (0.5, 0.9), "Sport": (0.4, 0.8), "Society": (0.3, 0.7)},
-            "ShopClerk": {"Economics": (0.4, 0.8), "Creativity": (0.2, 0.6), "Sport": (0.2, 0.6)},
-            "Businessman": {"Economics": (0.7, 1.0), "Society": (0.4, 0.8), "Creativity": (0.2, 0.6)},
-            "Artist": {"Creativity": (0.7, 1.0), "Spirituality": (0.3, 0.7), "Society": (0.3, 0.7)},
-            "Blogger": {"Creativity": (0.5, 0.9), "Society": (0.5, 0.9), "Economics": (0.3, 0.7)},
-            "Unemployed": {"Economics": (0.6, 1.0), "Society": (0.5, 0.9), "Sport": (0.2, 0.6)},
-            "SpiritualMentor": {"Spirituality": (0.7, 1.0), "Wellbeing": (0.5, 0.9), "Society": (0.3, 0.7)},
-            "Philosopher": {"Spirituality": (0.6, 1.0), "Knowledge": (0.6, 0.9), "Society": (0.4, 0.8)},
-            "Politician": {"Society": (0.7, 1.0), "Economics": (0.5, 0.9), "Knowledge": (0.3, 0.7)},
-            "Doctor": {"Wellbeing": (0.7, 1.0), "Knowledge": (0.6, 0.9), "Economics": (0.3, 0.7)}
+        affinity_data = {
+            'ShopClerk': {'Economic': 3, 'Health': 2, 'Spiritual': 2, 'Conspiracy': 3, 'Science': 1, 'Culture': 2, 'Sport': 2},
+            'Worker': {'Economic': 3, 'Health': 3, 'Spiritual': 2, 'Conspiracy': 3, 'Science': 1, 'Culture': 2, 'Sport': 3},
+            'Developer': {'Economic': 3, 'Health': 2, 'Spiritual': 1, 'Conspiracy': 2, 'Science': 5, 'Culture': 3, 'Sport': 2},
+            'Politician': {'Economic': 5, 'Health': 4, 'Spiritual': 2, 'Conspiracy': 2, 'Science': 3, 'Culture': 3, 'Sport': 2},
+            'Blogger': {'Economic': 4, 'Health': 4, 'Spiritual': 3, 'Conspiracy': 4, 'Science': 3, 'Culture': 5, 'Sport': 4},
+            'Businessman': {'Economic': 5, 'Health': 3, 'Spiritual': 2, 'Conspiracy': 2, 'Science': 3, 'Culture': 3, 'Sport': 3},
+            'Doctor': {'Economic': 3, 'Health': 5, 'Spiritual': 2, 'Conspiracy': 1, 'Science': 5, 'Culture': 2, 'Sport': 3},
+            'Teacher': {'Economic': 3, 'Health': 4, 'Spiritual': 3, 'Conspiracy': 2, 'Science': 4, 'Culture': 4, 'Sport': 3},
+            'Unemployed': {'Economic': 4, 'Health': 3, 'Spiritual': 3, 'Conspiracy': 4, 'Science': 2, 'Culture': 3, 'Sport': 3},
+            'Artist': {'Economic': 2, 'Health': 2, 'Spiritual': 4, 'Conspiracy': 2, 'Science': 2, 'Culture': 5, 'Sport': 2},
+            'SpiritualMentor': {'Economic': 2, 'Health': 3, 'Spiritual': 5, 'Conspiracy': 3, 'Science': 2, 'Culture': 3, 'Sport': 2},
+            'Philosopher': {'Economic': 3, 'Health': 3, 'Spiritual': 5, 'Conspiracy': 3, 'Science': 4, 'Culture': 4, 'Sport': 1}
         }
-        
         with engine.connect() as conn:
-            # Clear existing data
-            conn.execute(text("DELETE FROM capsim.agent_interests"))
+            conn.execute(text("TRUNCATE TABLE capsim.affinity_map RESTART IDENTITY CASCADE"))
+            insert_data = []
+            for profession, topics in affinity_data.items():
+                for topic, score in topics.items():
+                    insert_data.append({"profession": profession, "topic": topic, "affinity_score": score})
             
-            # Insert interest ranges
-            insert_count = 0
+            if insert_data:
+                conn.execute(text("""
+                    INSERT INTO capsim.affinity_map (profession, topic, affinity_score)
+                    VALUES (:profession, :topic, :affinity_score)
+                """), insert_data)
+            conn.commit()
+        print(f"✅ Загружено {len(insert_data)} записей аффинити")
+
+    def seed_agent_interests_table(self) -> None:
+        """Заполняет `agent_interests` согласно ТЗ v1.5."""
+        print("🎯 Заполнение `agent_interests`...")
+        engine = create_engine(self.sync_url)
+        interest_ranges = {
+            'ShopClerk': {'Economics': (4.59, 5.0), 'Wellbeing': (0.74, 1.34), 'Spirituality': (0.64, 1.24), 'Knowledge': (1.15, 1.75), 'Creativity': (1.93, 2.53), 'Society': (2.70, 3.30)},
+            'Worker': {'Economics': (3.97, 4.57), 'Wellbeing': (1.05, 1.65), 'Spirituality': (1.86, 2.46), 'Knowledge': (1.83, 2.43), 'Creativity': (0.87, 1.47), 'Society': (0.69, 1.29)},
+            'Developer': {'Economics': (1.82, 2.42), 'Wellbeing': (1.15, 1.75), 'Spirituality': (0.72, 1.32), 'Knowledge': (4.05, 4.65), 'Creativity': (2.31, 2.91), 'Society': (1.59, 2.19)},
+            'Politician': {'Economics': (0.51, 1.11), 'Wellbeing': (1.63, 2.23), 'Spirituality': (0.32, 0.92), 'Knowledge': (2.07, 2.67), 'Creativity': (1.73, 2.33), 'Society': (3.57, 4.17)},
+            'Blogger': {'Economics': (1.32, 1.92), 'Wellbeing': (1.01, 1.61), 'Spirituality': (1.20, 1.80), 'Knowledge': (1.23, 1.83), 'Creativity': (3.27, 3.87), 'Society': (2.43, 3.03)},
+            'Businessman': {'Economics': (4.01, 4.61), 'Wellbeing': (0.76, 1.36), 'Spirituality': (0.91, 1.51), 'Knowledge': (1.35, 1.95), 'Creativity': (2.04, 2.64), 'Society': (2.42, 3.02)},
+            'Doctor': {'Economics': (1.02, 1.62), 'Wellbeing': (3.97, 4.57), 'Spirituality': (1.37, 1.97), 'Knowledge': (2.01, 2.61), 'Creativity': (1.58, 2.18), 'Society': (2.45, 3.05)},
+            'Teacher': {'Economics': (1.32, 1.92), 'Wellbeing': (2.16, 2.76), 'Spirituality': (1.40, 2.00), 'Knowledge': (3.61, 4.21), 'Creativity': (1.91, 2.51), 'Society': (2.24, 2.84)},
+            'Unemployed': {'Economics': (0.72, 1.32), 'Wellbeing': (1.38, 1.98), 'Spirituality': (3.69, 4.29), 'Knowledge': (2.15, 2.75), 'Creativity': (2.33, 2.93), 'Society': (2.42, 3.02)},
+            'Artist': {'Economics': (0.86, 1.46), 'Wellbeing': (0.91, 1.51), 'Spirituality': (2.01, 2.61), 'Knowledge': (1.82, 2.42), 'Creativity': (3.72, 4.32), 'Society': (1.94, 2.54)},
+            'SpiritualMentor': {'Economics': (0.62, 1.22), 'Wellbeing': (2.04, 2.64), 'Spirituality': (3.86, 4.46), 'Knowledge': (2.11, 2.71), 'Creativity': (2.12, 2.72), 'Society': (1.95, 2.55)},
+            'Philosopher': {'Economics': (1.06, 1.66), 'Wellbeing': (2.22, 2.82), 'Spirituality': (3.71, 4.31), 'Knowledge': (3.01, 3.61), 'Creativity': (2.21, 2.81), 'Society': (1.80, 2.40)}
+        }
+        with engine.connect() as conn:
+            conn.execute(text("TRUNCATE TABLE capsim.agent_interests RESTART IDENTITY CASCADE"))
+            insert_data = []
             for profession, interests in interest_ranges.items():
                 for interest_name, (min_val, max_val) in interests.items():
-                    conn.execute(text("""
-                        INSERT INTO capsim.agent_interests (profession, interest_name, min_value, max_value)
-                        VALUES (:profession, :interest_name, :min_value, :max_value)
-                    """), {
-                        "profession": profession,
-                        "interest_name": interest_name,
-                        "min_value": min_val,
-                        "max_value": max_val
-                    })
-                    insert_count += 1
-                    
+                    insert_data.append({"profession": profession, "interest_name": interest_name, "min_value": min_val, "max_value": max_val})
+            
+            if insert_data:
+                conn.execute(text("""
+                    INSERT INTO capsim.agent_interests (profession, interest_name, min_value, max_value)
+                    VALUES (:profession, :interest_name, :min_value, :max_value)
+                """), insert_data)
             conn.commit()
+        print(f"✅ Создано {len(insert_data)} записей `agent_interests`")
         
-        print(f"✅ Создано {insert_count} записей agent_interests")
-    
-    def generate_global_agents(self, count: int = 1000) -> None:
-        """Генерация глобальных агентов с русскими именами."""
-        print(f"👥 Генерация {count} глобальных агентов с русскими именами...")
-        
-        engine = create_engine(self.sync_url)
-        
-        with engine.connect() as conn:
-            # Clear existing data in correct order (respecting foreign keys)
-            conn.execute(text("DELETE FROM capsim.events"))
-            conn.execute(text("DELETE FROM capsim.person_attribute_history"))
-            conn.execute(text("DELETE FROM capsim.trends"))
-            conn.execute(text("DELETE FROM capsim.simulation_participants"))
-            conn.execute(text("DELETE FROM capsim.persons"))
-            conn.execute(text("DELETE FROM capsim.simulation_runs"))
-            
-            # ✨ Load attribute ranges from agents_profession once
-            ranges_map = {
-                row['profession']: {
-                    'financial_capability': (row['financial_capability_min'], row['financial_capability_max']),
-                    'trend_receptivity': (row['trend_receptivity_min'], row['trend_receptivity_max']),
-                    'social_status': (row['social_status_min'], row['social_status_max']),
-                    'energy_level': (row['energy_level_min'], row['energy_level_max']),
-                    'time_budget': (row['time_budget_min'], row['time_budget_max']),
-                }
-                for row in conn.execute(text("SELECT * FROM capsim.agents_profession")).mappings()
-            }
-
-            # Generate agents in batches
-            batch_size = 100
-            agents_created = 0
-            
-            for batch_start in range(0, count, batch_size):
-                batch_end = min(batch_start + batch_size, count)
-                agents_batch = []
-                
-                for _ in range(batch_start, batch_end):
-                    # Generate Russian name with proper gender matching
-                    gender = random.choice(['male', 'female'])
-                    
-                    if gender == 'male':
-                        first_name = self.fake.first_name_male()
-                        last_name = self.fake.last_name_male()
-                    else:
-                        first_name = self.fake.first_name_female()
-                        last_name = self.fake.last_name_female()
-                    
-                    # Random profession
-                    profession = random.choice(self.PROFESSIONS)
-                    
-                    prof_ranges = ranges_map.get(profession)
-                    if not prof_ranges:
-                        raise ValueError(f"Ranges for profession {profession} not found in agents_profession table")
-
-                    # Generate attributes strictly within ranges
-                    financial_capability = round(random.uniform(*prof_ranges['financial_capability']), 3)
-                    trend_receptivity = round(random.uniform(*prof_ranges['trend_receptivity']), 3)
-                    social_status = round(random.uniform(*prof_ranges['social_status']), 3)
-                    energy_level = round(random.uniform(*prof_ranges['energy_level']), 3)
-                    time_budget = float(round(random.uniform(*prof_ranges['time_budget']) * 2) / 2)
-                    
-                    # Generate birth date (18-65 years old)
-                    current_year = datetime.now().year
-                    birth_year = random.randint(current_year - 65, current_year - 18)
-                    birth_date = datetime(birth_year, random.randint(1, 12), random.randint(1, 28)).date()
-                    
-                    # Validate ranges
-                    assert 0.0 <= financial_capability <= 5.0, f"Invalid financial_capability: {financial_capability}"
-                    assert 0.0 <= trend_receptivity <= 5.0, f"Invalid trend_receptivity: {trend_receptivity}"
-                    assert 0.0 <= social_status <= 5.0, f"Invalid social_status: {social_status}"
-                    assert 0.0 <= energy_level <= 5.0, f"Invalid energy_level: {energy_level}"
-                    assert 1.0 <= time_budget <= 5.0, f"Invalid time_budget: {time_budget}"
-                    
-                    agents_batch.append({
-                        "id": str(uuid.uuid4()),
-                        "profession": profession,
-                        "first_name": first_name,
-                        "last_name": last_name,
-                        "gender": gender,
-                        "date_of_birth": birth_date,
-                        "financial_capability": financial_capability,
-                        "trend_receptivity": trend_receptivity,
-                        "social_status": social_status,
-                        "energy_level": energy_level,
-                        "time_budget": time_budget,
-                        "exposure_history": json.dumps({}),
-                        "interests": json.dumps({}),
-                        "created_at": datetime.utcnow(),
-                        "updated_at": datetime.utcnow()
-                    })
-                
-                # Bulk insert batch
-                if agents_batch:
-                    conn.execute(text("""
-                        INSERT INTO capsim.persons (
-                            id, profession, first_name, last_name, gender, date_of_birth,
-                            financial_capability, trend_receptivity, social_status, energy_level, 
-                            time_budget, exposure_history, interests, created_at, updated_at
-                        ) VALUES (
-                            :id, :profession, :first_name, :last_name, :gender, :date_of_birth,
-                            :financial_capability, :trend_receptivity, :social_status, :energy_level,
-                            :time_budget, :exposure_history, :interests, :created_at, :updated_at
-                        )
-                    """), agents_batch)
-                    
-                    agents_created += len(agents_batch)
-                    print(f"   📝 Создано агентов: {agents_created}/{count}")
-            
-            conn.commit()
-        
-        print(f"✅ Создано {agents_created} глобальных агентов с русскими именами")
-    
     def verify_data(self) -> None:
         """Проверка корректности созданных данных."""
         print("🔍 Проверка целостности данных...")
@@ -605,21 +479,16 @@ class CapsimBootstrap:
             # Step 2: Run migrations
             self.run_alembic_migration()
             
-            # Step 3: Seed affinity data
-            self.seed_affinity_data()
+            # Step 3: Seed config tables from TZ
+            self.seed_agents_profession_table()
+            self.seed_affinity_map_table()
+            self.seed_agent_interests_table()
             
-            # Step 4: Seed agent interests
-            self.seed_agent_interests()
-            
-            # Step 5: Generate global agents
-            self.generate_global_agents(1000)
-            
-            # Step 6: Verify everything
+            # Step 4: Verify everything
             self.verify_data()
             
             print(f"🎉 CAPSIM Bootstrap завершен успешно!")
             print(f"   💾 БД готова для запуска симуляций")
-            print(f"   👥 Создано 1000 глобальных агентов")
             
         except Exception as e:
             print(f"❌ Ошибка bootstrap: {e}")

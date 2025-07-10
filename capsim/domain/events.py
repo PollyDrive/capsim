@@ -743,7 +743,7 @@ class TrendInfluenceEvent(BaseEvent):
                     
                     # Создаем будущее действие с parent_trend_id только если тренд существует
                     if trend and trend.trend_id:
-                        response_delay = random.uniform(10.0, 60.0)
+                        response_delay = random.uniform(1.0, 10.0)
                         new_action = {
                             "agent_id": agent.id,
                             "action_type": "PublishPostAction",
@@ -753,8 +753,8 @@ class TrendInfluenceEvent(BaseEvent):
                         }
                         new_actions_batch.append(new_action)
                     
-                    # ИСПРАВЛЕНИЕ: Увеличиваем total_interactions у родительского тренда
-                    trend.add_interaction()
+                    # ИСПРАВЛЕНИЕ: НЕ увеличиваем total_interactions здесь - это отдельное взаимодействие
+                    # Ответный пост будет создан как отдельное событие и добавит своё взаимодействие
         
         # --------------- PostEffect для автора ----------------
         author_effect_update = self._calculate_author_post_effect(trend.originator_id, trend, update_state_batch, self.timestamp)

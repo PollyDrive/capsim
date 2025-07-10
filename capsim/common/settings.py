@@ -114,7 +114,7 @@ class Settings:
     # Simulation core settings  
     DECIDE_SCORE_THRESHOLD: float = float(os.getenv("DECIDE_SCORE_THRESHOLD"))
     BASE_RATE: float = float(os.getenv("BASE_RATE"))
-    BATCH_SIZE: int = int(os.getenv("BATCH_SIZE"))
+    BATCH_SIZE: int = int(os.getenv("BATCH_SIZE", "1000")) # Увеличено с 100 до 1000
     
     # Realtime mode configuration  
     SIM_SPEED_FACTOR: float = float(os.getenv("SIM_SPEED_FACTOR"))
@@ -123,8 +123,9 @@ class Settings:
     # Performance settings
     BATCH_RETRY_ATTEMPTS: int = int(os.getenv("BATCH_RETRY_ATTEMPTS"))
     BATCH_RETRY_BACKOFFS: str = os.getenv("BATCH_RETRY_BACKOFFS")
-    SHUTDOWN_TIMEOUT_SEC: int = int(os.getenv("SHUTDOWN_TIMEOUT_SEC"))
-    MAX_QUEUE_SIZE: int = int(os.getenv("MAX_QUEUE_SIZE"))
+    SHUTDOWN_TIMEOUT_SEC: int = int(os.getenv("SHUTDOWN_TIMEOUT_SEC", "30"))
+    MAX_QUEUE_SIZE: int = int(os.getenv("MAX_QUEUE_SIZE", "5000"))
+    BATCH_COMMIT_TIMEOUT_SEC: int = int(os.getenv("BATCH_COMMIT_TIMEOUT_SEC", "5"))
     
     # Cache settings
     CACHE_TTL_MIN: int = int(os.getenv("CACHE_TTL_MIN"))
@@ -134,7 +135,7 @@ class Settings:
     TREND_ARCHIVE_THRESHOLD_DAYS: int = int(os.getenv("TREND_ARCHIVE_THRESHOLD_DAYS"))
     
     # Monitoring settings
-    ENABLE_METRICS: bool = os.getenv("ENABLE_METRICS").lower() == "true"
+    ENABLE_METRICS: bool = os.getenv("ENABLE_METRICS", "true").lower() == "true"
     METRICS_PORT: int = int(os.getenv("METRICS_PORT"))
     
     # Logging settings

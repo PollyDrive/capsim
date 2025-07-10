@@ -272,6 +272,15 @@ class SimulationEngine:
                             "total_count": len(self.agents),
                             "requested_count": num_agents
                         }, default=str))
+                        # ИСПРАВЛЕНИЕ: Сбрасываем состояние переиспользуемых агентов
+                        for agent in self.agents:
+                            agent.energy_level = 5.0  # Полная энергия
+                            agent.time_budget = 2.5   # Стандартный временной бюджет
+                            agent.purchases_today = 0  # Сброс счетчика покупок
+                            agent.last_post_ts = None  # Сброс cooldown'ов
+                            agent.last_selfdev_ts = None
+                            agent.last_purchase_ts = {}
+                        
                         # self.agents уже содержит нужное число; пропускаем создание
                     else:
                         # СТРОГОЕ РАСПРЕДЕЛЕНИЕ ПРОФЕССИЙ согласно ТЗ (таблица распределения)
@@ -410,16 +419,13 @@ class SimulationEngine:
         
     async def run_simulation(self, duration_days: float = 1.0) -> None:
         """
-        Запускает основной цикл симуляции.
-        
-        Args:
-            duration_days: Продолжительность симуляции в днях
+        Запускает главный цикл симуляции.
         """
         if not self.simulation_id:
             raise RuntimeError("Simulation not initialized. Call initialize() first.")
             
         self._running = True
-        end_time = duration_days * 1440.0  # Конвертируем дни в минуты
+        end_time = self.current_time + (duration_days * 24 * 60)
         self._simulation_start_real = time.time()
         
         logger.info(json.dumps({
@@ -431,18 +437,9 @@ class SimulationEngine:
             "realtime_mode": settings.ENABLE_REALTIME,
             "speed_factor": settings.SIM_SPEED_FACTOR
         }, default=str))
-        
-        events_processed = 0
-        agent_actions_scheduled = 0
-        
-        # Логируем начальное состояние очереди
-        # Временно отключаем логирование очереди событий из-за проблем с UUID
-        # self._log_event_queue_status()
-        
-        # ИСПРАВЛЕНИЕ: Планируем начальные действия агентов для заполнения очереди
+
+        # Планируем начальные действия агентов
         initial_scheduled = await self._schedule_seed_actions()
-        agent_actions_scheduled += initial_scheduled
-        
         logger.info(json.dumps({
             "event": "initial_actions_scheduled", 
             "scheduled_count": initial_scheduled,
@@ -450,93 +447,67 @@ class SimulationEngine:
         }, default=str))
         
         try:
-            while self._running and self.current_time < end_time:
-                # Обработать следующее событие из очереди
-                if self.event_queue:
-                    priority_event = heapq.heappop(self.event_queue)
-                    
-                    # Проверяем, не вышли ли мы за пределы времени симуляции
-                    if priority_event.timestamp > end_time:
-                        # Возвращаем событие в очередь и завершаем симуляцию
-                        heapq.heappush(self.event_queue, priority_event)
-                        break
-                    
-                    # Конвертировать sim_time в real_time для realtime режима
-                    if priority_event.event.timestamp_real is None:
-                        priority_event.event.timestamp_real = (
-                            self._simulation_start_real + 
-                            priority_event.timestamp * 60.0 / settings.SIM_SPEED_FACTOR
-                        )
-                    
-                    # Ожидание до времени события в realtime режиме
-                    if settings.ENABLE_REALTIME:
-                        await self.clock.sleep_until(priority_event.timestamp)
-                    
-                    self.current_time = priority_event.timestamp
-                    
-                    # Обработать событие
-                    await self._process_event(priority_event.event)
-                    events_processed += 1
-                    
-                    # Проверить batch commit
-                    if self._should_commit_batch():
-                        await self._batch_commit_states()
-                
-                # Запланировать новые действия агентов после каждого события
-                if events_processed % 5 == 0:  # Каждые 5 событий планируем действия агентов
-                    scheduled = await self._schedule_agent_actions()
-                    agent_actions_scheduled += scheduled
-                    # Логируем состояние очереди каждые 50 событий
-                    # self._log_event_queue_status()
-                
-                # Если очередь пуста, завершаем симуляцию
-                if not self.event_queue:
+            while self._running:
+                # Проверка 1: Выход по времени
+                if self.current_time >= end_time:
                     logger.info(json.dumps({
-                        "event": "simulation_ending_empty_queue",
-                        "current_time": self.current_time,
-                        "end_time": end_time,
-                        "events_processed": events_processed
+                        "event": "simulation_duration_reached",
+                        "simulation_time": self.current_time,
+                        "target_end_time": end_time
                     }, default=str))
                     break
+
+                # Проверка 2: Выход, если событий не осталось
+                if not self.event_queue:
+                    logger.info(json.dumps({
+                        "event": "event_queue_empty",
+                        "simulation_time": self.current_time,
+                        "msg": "Simulation finished before duration reached."
+                    }, default=str))
+                    break
+
+                # Обработать следующее событие
+                priority_event = heapq.heappop(self.event_queue)
+                self.current_time = priority_event.timestamp
+
+                # Еще одна проверка времени на случай, если событие из будущего
+                if self.current_time > end_time:
+                    heapq.heappush(self.event_queue, priority_event)
+                    break
+
+                await self._process_event(priority_event.event)
                 
-                # Минимальная пауза для cooperative multitasking
-                await asyncio.sleep(0.001 if not settings.ENABLE_REALTIME else 0.1 / max(1.0, settings.SIM_SPEED_FACTOR))
-                
-        except Exception as e:
-            logger.error(json.dumps({
-                "event": "simulation_error",
-                "error": str(e),
-                "current_time": self.current_time,
-                "events_processed": events_processed
-            }, default=str))
-            raise
+                # Batch commit по таймауту или размеру
+                if self._should_commit_batch():
+                    await self._batch_commit_states()
+                    
+                # Realtime-ожидание убрано, так как вызывает ошибку в SimClock
+                # await self.clock.sleep_if_needed(self.current_time, self._simulation_start_real)
+        
+        except asyncio.CancelledError:
+            logger.warning("Simulation run was cancelled.")
         finally:
-            # Финальный batch commit
-            await self._batch_commit_states()
+            self._running = False
+            if self._batch_updates:
+                await self._batch_commit_states()
             
-            # ИСПРАВЛЕНИЕ: Обновить статус симуляции на COMPLETED с end_time
-            await self.db_repo.update_simulation_status(
-                self.simulation_id, 
-                "COMPLETED",
-                datetime.utcnow()
-            )
+            if self.simulation_id:
+                await self.db_repo.update_simulation_status(
+                    self.simulation_id, 
+                    "COMPLETED",
+                    datetime.utcnow()
+                )
             
             logger.info(json.dumps({
-                "event": "simulation_completed",
+                "event": "simulation_finished",
                 "simulation_id": str(self.simulation_id),
-                "duration_minutes": self.current_time,
-                "events_processed": events_processed,
-                "agent_actions_scheduled": agent_actions_scheduled,
-                "final_agents": len(self.agents),
-                "final_trends": len(self.active_trends)
+                "final_sim_time": self.current_time,
+                "real_duration_sec": time.time() - self._simulation_start_real
             }, default=str))
-        
+
     async def _process_event(self, event: BaseEvent) -> None:
         """
-        Обрабатывает одно событие из очереди.
-        
-        Args:
-            event: Событие для обработки
+        Обрабатывает одно событие и обновляет состояние симуляции.
         """
         start_time = datetime.utcnow()
         
@@ -639,10 +610,22 @@ class SimulationEngine:
         # Селективный отбор подходящих агентов для seed событий
         suitable_agents = []
         for agent in self.agents:
-            if (agent.energy_level >= 0.5 and  # ИСПРАВЛЕНИЕ: снижаем с 1.5 до 0.5
-                agent.time_budget >= 1 and     # ИСПРАВЛЕНИЕ: снижаем с 2 до 1
-                agent.social_status >= 1.0 and # ИСПРАВЛЕНИЕ: снижаем с 2.0 до 1.0
-                agent.trend_receptivity >= 0.5): # ИСПРАВЛЕНИЕ: снижаем с 2.0 до 0.5
+            # Логируем атрибуты агента для отладки
+            logger.info(json.dumps({
+                "event": "agent_attributes_check",
+                "agent_id": str(agent.id),
+                "profession": agent.profession,
+                "energy_level": agent.energy_level,
+                "time_budget": agent.time_budget,
+                "social_status": agent.social_status,
+                "trend_receptivity": agent.trend_receptivity,
+                "financial_capability": agent.financial_capability
+            }, default=str))
+            
+            if (agent.energy_level >= 0.1 and  # ИСПРАВЛЕНИЕ: ещё больше снижаем с 0.5 до 0.1
+                agent.time_budget >= 0.5 and   # ИСПРАВЛЕНИЕ: ещё больше снижаем с 1 до 0.5
+                agent.social_status >= 0.5 and # ИСПРАВЛЕНИЕ: ещё больше снижаем с 1.0 до 0.5
+                agent.trend_receptivity >= 0.1): # ИСПРАВЛЕНИЕ: ещё больше снижаем с 0.5 до 0.1
                 suitable_agents.append(agent)
         
         # Ограничиваем количество seed событий (10-20% от подходящих агентов)
@@ -763,7 +746,7 @@ class SimulationEngine:
                     new_value = old_value + delta
                 setattr(agent, attr_name, new_value)
                 # Логируем историю только для значимых изменений
-                if abs(delta) >= 0.01:
+                if abs(delta) >= 0.02:
                     history_record = {
                         "type": "attribute_history",
                         "person_id": agent_id,
@@ -858,6 +841,12 @@ class SimulationEngine:
         from capsim.simulation.actions.factory import ACTION_FACTORY
         import random
         
+        logger.info(json.dumps({
+            "event": "schedule_agent_actions_start",
+            "total_agents": len(self.agents),
+            "current_time": self.current_time
+        }, default=str))
+        
         scheduled_count = 0
         context = SimulationContext(
             current_time=self.current_time,
@@ -879,12 +868,18 @@ class SimulationEngine:
             # if not self._can_agent_act_today(agent.id):
             #     continue
                 
-            # Проверяем кулдаун агента (снижено до 15 минут в v1.8)
-            last_action_time = self._agent_action_cooldowns.get(agent.id, 0)
-            if self.current_time - last_action_time < 10.0:  # Снижено с 15 до 10 минут
-                continue
+            # ИСПРАВЛЕНИЕ: Убираем cooldown для более активных агентов
+            # last_action_time = self._agent_action_cooldowns.get(agent.id, 0)
+            # if self.current_time - last_action_time < 10.0:  # Снижено с 15 до 10 минут
+            #     continue
                 
             eligible_agents.append(agent)
+        
+        logger.info(json.dumps({
+            "event": "eligible_agents_found",
+            "eligible_count": len(eligible_agents),
+            "total_agents": len(self.agents)
+        }, default=str))
         
         # v1.8: Увеличиваем активность до 20% от доступных агентов
         max_actions = max(1, min(len(eligible_agents), int(len(eligible_agents) * 0.2)))
@@ -896,9 +891,25 @@ class SimulationEngine:
             # Берем тренд с наивысшей виральностью
             current_trend = max(self.active_trends.values(), key=lambda t: t.calculate_current_virality())
         
+        logger.info(json.dumps({
+            "event": "selected_agents_for_v18",
+            "selected_count": len(selected_agents),
+            "current_trend": str(current_trend.trend_id) if current_trend else None
+        }, default=str))
+        
         for agent in selected_agents:
             # v1.8: Используем новый алгоритм принятия решений
             action_name = agent.decide_action_v18(current_trend, self.current_time)
+            
+            logger.info(json.dumps({
+                "event": "agent_decision_made",
+                "agent_id": str(agent.id),
+                "action_name": action_name,
+                "energy": agent.energy_level,
+                "time_budget": agent.time_budget,
+                "financial_capability": agent.financial_capability
+            }, default=str))
+            
             if not action_name:
                 continue
                 
@@ -920,6 +931,11 @@ class SimulationEngine:
 
             # Проверяем возможность выполнения
             if not action.can_execute(agent, self.current_time):
+                logger.info(json.dumps({
+                    "event": "action_cannot_execute",
+                    "agent_id": str(agent.id),
+                    "action_name": action_name
+                }, default=str))
                 continue
                 
             # v1.8: Выполняем действие немедленно (не откладываем)

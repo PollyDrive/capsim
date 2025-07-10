@@ -158,7 +158,7 @@ class Person:
         if action_type == "PublishPostAction":
             return (
                 self.energy_level >= 0.5 and
-                self.time_budget >= 1 and
+                self.time_budget >= 0.5 and  # Снижено с 1 до 0.5
                 self.trend_receptivity > 0
             )
             
@@ -192,11 +192,6 @@ class Person:
         """Проверяет возможность публикации поста (cooldown + ресурсы)."""
         from capsim.common.settings import action_config
 
-        # Блок действий в ночное время
-        day_time = current_time % 1440
-        if 0 <= day_time < 480:
-            return False
-        
         # Проверка cooldown (сокращенный cooldown)
         if self.last_post_ts is not None:
             cooldown_passed = current_time - self.last_post_ts >= action_config.cooldowns["POST_MIN"] / 2  # Половина cooldown
@@ -213,10 +208,6 @@ class Person:
         """Проверяет возможность саморазвития (cooldown + ресурсы)."""
         from capsim.common.settings import action_config
 
-        day_time = current_time % 1440
-        if 0 <= day_time < 480:
-            return False
-        
         # Проверка cooldown (сокращенный)
         if self.last_selfdev_ts is not None:
             cooldown_passed = current_time - self.last_selfdev_ts >= action_config.cooldowns["SELF_DEV_MIN"] / 2  # Половина cooldown
@@ -230,21 +221,16 @@ class Person:
         """Проверяет возможность покупки определенного уровня."""
         from capsim.common.settings import action_config
 
-        day_time = current_time % 1440
-        if 0 <= day_time < 480:
-            return False
-        
         # Проверка дневного лимита (увеличенного)
         max_purchases = action_config.limits["MAX_PURCHASES_DAY"] * 2  # Удваиваем лимит
         if self.purchases_today >= max_purchases:
             return False
         
-        # Более мягкие финансовые требования
-        # v1.9: используем минимальную стоимость из диапазона cost_range
+        # ИСПРАВЛЕНИЕ: Снижаем финансовые требования для покупок
         cost_range = action_config.effects["PURCHASE"][level]["cost_range"]
-        max_cost = cost_range[1]
-        required_capability = max_cost  # требуемо покрыть максимальную стоимость
-        return self.financial_capability >= required_capability * 0.8  # 80% от макс стоимости
+        min_cost = cost_range[0]  # Используем минимальную стоимость
+        required_capability = min_cost * 0.5  # Требуем только 50% от минимальной стоимости
+        return self.financial_capability >= required_capability
         
     def get_interest_in_topic(self, topic: str) -> float:
         """
@@ -453,22 +439,22 @@ class Person:
                     * (1 + self.social_status / 8)  # Увеличено влияние social_status
                 )
             else:
-                post_score = 0.5  # Увеличен минимальный score
+                post_score = 0.4  # Снижен с 0.8 до 0.4 для баланса с покупками
             actions.append(("Post", post_score))
         
         # PURCHASE logic (L1/L2/L3) - более активные покупки
         for level in ["L1", "L2", "L3"]:
             if self.can_purchase(current_time, level):
-                base_score = 0.6 * getattr(action_config, 'shop_weights', {}).get(self.profession, 1.0)  # Увеличено с 0.3
+                base_score = 0.8 * getattr(action_config, 'shop_weights', {}).get(self.profession, 1.0)  # Увеличено с 0.6 до 0.8
                 # Добавляем рандомность для разнообразия
-                base_score += random.random() * 0.3
+                base_score += random.random() * 0.6  # Увеличено с 0.4 до 0.6
                 if trend and hasattr(trend, 'topic') and trend.topic == "Economic":
-                    base_score *= 1.5  # Увеличено с 1.2
+                    base_score *= 1.5  # Увеличено с 1.2 до 1.5
                 actions.append((f"Purchase_{level}", base_score))
         
         # SELF_DEV logic - больше мотивации для развития
         if self.can_self_dev(current_time):
-            score = max(0.3, 1.2 - self.energy_level / 4)  # Увеличена минимальная мотивация
+            score = max(0.4, 0.8 - self.energy_level / 5)  # Снижена максимальная мотивация
             actions.append(("SelfDev", score))
         
         # Weighted selection
@@ -483,6 +469,11 @@ class Person:
             return None
             
         selected = random.choices(names, weights=weights)[0]
+        
+        # Логируем выбор действия для отладки
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Agent {self.id} ({self.profession}) chose action: {selected} from {names} with weights {weights}")
         
         # Возвращаем имя действия как строку
         return selected 
