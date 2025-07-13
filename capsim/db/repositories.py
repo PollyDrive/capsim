@@ -375,6 +375,56 @@ class DatabaseRepository:
             )
             return result.scalars().all()
             
+    async def get_latest_agent_attributes(self, person_ids: List[UUID]) -> Dict[UUID, Dict[str, float]]:
+        """
+        Получает последние значения атрибутов агентов из person_attribute_history.
+        
+        Args:
+            person_ids: Список ID агентов
+            
+        Returns:
+            Словарь {person_id: {attribute_name: latest_value}}
+        """
+        if not person_ids:
+            return {}
+            
+        async with self.ReadOnlySession() as session:
+            # Получаем последние значения атрибутов для каждого агента
+            query = text("""
+                WITH latest_attributes AS (
+                    SELECT 
+                        person_id,
+                        attribute_name,
+                        new_value,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY person_id, attribute_name 
+                            ORDER BY change_timestamp DESC, created_at DESC
+                        ) as rn
+                    FROM capsim.person_attribute_history
+                    WHERE person_id = ANY(:person_ids)
+                )
+                SELECT person_id, attribute_name, new_value
+                FROM latest_attributes
+                WHERE rn = 1
+            """)
+            
+            result = await session.execute(query, {"person_ids": person_ids})
+            rows = result.fetchall()
+            
+            # Группируем результаты по person_id
+            attributes_by_person = {}
+            for row in rows:
+                person_id = row[0]
+                attribute_name = row[1]
+                new_value = row[2]
+                
+                if person_id not in attributes_by_person:
+                    attributes_by_person[person_id] = {}
+                    
+                attributes_by_person[person_id][attribute_name] = new_value
+                
+            return attributes_by_person
+            
     async def get_person(self, person_id: UUID) -> Optional[Person]:
         """Get person by ID."""
         async with self.ReadOnlySession() as session:

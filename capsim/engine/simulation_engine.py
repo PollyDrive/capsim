@@ -196,24 +196,37 @@ class SimulationEngine:
             # Преобразуем SQLAlchemy модели Person → доменные объекты Person для движка
             from ..domain.person import Person as DomainPerson  # локальный импорт, чтобы избежать циклов
 
+            # Получаем последние атрибуты агентов из истории
+            person_ids = [p.id for p in db_persons[:num_agents]]
+            latest_attributes = await self.db_repo.get_latest_agent_attributes(person_ids)
+
             converted: list[DomainPerson] = []
             for p in db_persons[:num_agents]:
-                converted.append(DomainPerson(
-                    id=p.id,
-                    profession=p.profession,
-                    first_name=p.first_name,
-                    last_name=p.last_name,
-                    gender=p.gender,
-                    date_of_birth=p.date_of_birth,
-                    financial_capability=p.financial_capability,
-                    trend_receptivity=p.trend_receptivity,
-                    social_status=p.social_status,
-                    energy_level=p.energy_level,
-                    time_budget=float(p.time_budget),
-                    exposure_history=p.exposure_history or {},
-                    interests=p.interests or {},
-                    simulation_id=self.simulation_id
-                ))
+                # Базовые атрибуты из persons
+                agent_attrs = {
+                    'id': p.id,
+                    'profession': p.profession,
+                    'first_name': p.first_name,
+                    'last_name': p.last_name,
+                    'gender': p.gender,
+                    'date_of_birth': p.date_of_birth,
+                    'financial_capability': p.financial_capability,
+                    'trend_receptivity': p.trend_receptivity,
+                    'social_status': p.social_status,
+                    'energy_level': p.energy_level,
+                    'time_budget': float(p.time_budget),
+                    'exposure_history': p.exposure_history or {},
+                    'interests': p.interests or {},
+                    'simulation_id': self.simulation_id
+                }
+                
+                # Применяем последние значения из истории, если они есть
+                if p.id in latest_attributes:
+                    for attr_name, latest_value in latest_attributes[p.id].items():
+                        if attr_name in ['financial_capability', 'trend_receptivity', 'social_status', 'energy_level', 'time_budget']:
+                            agent_attrs[attr_name] = latest_value
+                
+                converted.append(DomainPerson(**agent_attrs))
 
             self.agents = converted
             
@@ -280,10 +293,10 @@ class SimulationEngine:
                             "total_count": len(self.agents),
                             "requested_count": num_agents
                         }, default=str))
-                        # ИСПРАВЛЕНИЕ: Сбрасываем состояние переиспользуемых агентов
+                        # ИСПРАВЛЕНИЕ: НЕ сбрасываем атрибуты агентов при реюзе
+                        # Агенты сохраняют свои атрибуты из истории между симуляциями
+                        # Сбрасываем только cooldown'ы и счетчики
                         for agent in self.agents:
-                            agent.energy_level = 5.0  # Полная энергия
-                            agent.time_budget = 2.5   # Стандартный временной бюджет
                             agent.purchases_today = 0  # Сброс счетчика покупок
                             agent.last_post_ts = None  # Сброс cooldown'ов
                             agent.last_selfdev_ts = None
@@ -432,6 +445,17 @@ class SimulationEngine:
             if morning_event_time < self.end_time:
                 self.add_event(MorningRecoveryEvent(morning_event_time), EventPriority.SYSTEM, morning_event_time)
 
+            # Добавляем EnergyRecoveryEvent каждые 3 минуты для коротких симуляций
+            # ИСПРАВЛЕНИЕ: Планируем только события в будущем относительно текущего времени
+            # И только если день еще не начался (day_start_time > self.current_time)
+            if day_start_time > self.current_time:
+                for minute in range(0, min(1440, int(self.end_time - day_start_time)), 3):
+                    energy_event_time = day_start_time + minute
+                    # Планируем только события в будущем и в пределах времени симуляции
+                    if energy_event_time < self.end_time:
+                        from capsim.domain.events import EnergyRecoveryEvent
+                        self.add_event(EnergyRecoveryEvent(energy_event_time), EventPriority.ENERGY_RECOVERY, energy_event_time)
+
             # 23:00 - SaveDailyTrendEvent
             save_event_time = day_start_time + 23 * 60
             if save_event_time < self.end_time:
@@ -478,8 +502,18 @@ class SimulationEngine:
             last_time_update = self.current_time
             stagnation_counter = 0
 
-            # ИСПРАВЛЕНИЕ: Основной цикл должен проверять и время, и наличие событий
-            while self._running and self.current_time < end_time and self.event_queue:
+            # ИСПРАВЛЕНИЕ: Основной цикл должен завершаться по времени симуляции
+            while self._running and self.current_time < end_time:
+
+                # Если очередь пуста, завершаем симуляцию
+                if not self.event_queue:
+                    logger.info(json.dumps({
+                        "event": "event_queue_empty",
+                        "simulation_time": self.current_time,
+                        "target_end_time": end_time,
+                        "msg": "Simulation finished - no more events."
+                    }, default=str))
+                    break
 
                 # Получаем следующее событие
                 priority_event = heapq.heappop(self.event_queue)
@@ -487,8 +521,17 @@ class SimulationEngine:
 
                 # Проверяем, не вышли ли мы за пределы времени симуляции
                 if event_timestamp > end_time:
+                    logger.info(json.dumps({
+                        "event": "simulation_time_limit_reached",
+                        "simulation_time": self.current_time,
+                        "target_end_time": end_time,
+                        "next_event_time": event_timestamp,
+                        "queue_size_remaining": len(self.event_queue),
+                        "msg": "Simulation finished - time limit reached."
+                    }, default=str))
+                    # Возвращаем событие в очередь и завершаем
                     heapq.heappush(self.event_queue, priority_event)
-                    break # Завершаем цикл, если следующее событие за гранью времени
+                    break
 
                 # --- ИСПРАВЛЕНИЕ ЛОГИКИ СКОРОСТИ ---
                 if settings.ENABLE_REALTIME or settings.SIM_SPEED_FACTOR > 1.0:
@@ -510,22 +553,10 @@ class SimulationEngine:
                     await self._batch_commit_states()
                 
                 # Запланировать новые действия агентов после каждого события
-                # ИСПРАВЛЕНИЕ: Планируем новые действия чаще для более активной симуляции
-                if (self.current_time < (self.end_time - 30.0)):  # Останавливаем планирование за 30 минут до конца
-                    # Планируем действия каждые 5 минут симуляции
-                    if int(self.current_time) % 5 == 0:
-                        scheduled = await self._schedule_agent_actions()
-                        agent_actions_scheduled += scheduled
-                
-                # Если очередь пуста, завершаем симуляцию
-                if not self.event_queue:
-                    logger.info(json.dumps({
-                        "event": "event_queue_empty",
-                        "simulation_time": self.current_time,
-                        "target_end_time": end_time,
-                        "msg": "Simulation finished - no more events."
-                    }, default=str))
-                    break
+                # ИСПРАВЛЕНИЕ: Планируем новые действия каждые 5 минут симуляции
+                if int(self.current_time) % 5 == 0:
+                    scheduled = await self._schedule_agent_actions()
+                    agent_actions_scheduled += scheduled
                 
         except Exception as e:
             logger.error(json.dumps({
@@ -853,31 +884,23 @@ class SimulationEngine:
                 else:
                     new_value = old_value + delta
                 setattr(agent, attr_name, new_value)
-                # Логируем историю только для значимых изменений
-                if abs(delta) >= 0.02:
-                    history_record = {
-                        "type": "attribute_history",
-                        "person_id": agent_id,
-                        "simulation_id": self.simulation_id,
-                        "attribute_name": attr_name,
-                        "old_value": old_value,
-                        "new_value": new_value,
-                        "delta": delta,
-                        "reason": update_state["reason"],
-                        "source_trend_id": update_state.get("source_trend_id"),
-                        "change_timestamp": update_state["timestamp"]
-                    }
-                    self.add_to_batch_update(history_record)
-            person_update = {
-                "type": "person_state",
-                "id": agent_id,
-                "reason": update_state["reason"],
-                "source_trend_id": update_state.get("source_trend_id"),
-                "timestamp": update_state["timestamp"]
-            }
-            for attr, delta in update_state["attribute_changes"].items():
-                person_update[attr] = getattr(agent, attr, None)
-            self.add_to_batch_update(person_update)
+                # ИСПРАВЛЕНИЕ: Сохраняем ВСЕ изменения атрибутов в историю
+                # Убираем фильтр по значимости - сохраняем каждое изменение
+                history_record = {
+                    "type": "attribute_history",
+                    "person_id": agent_id,
+                    "simulation_id": self.simulation_id,
+                    "attribute_name": attr_name,
+                    "old_value": old_value,
+                    "new_value": new_value,
+                    "delta": delta,
+                    "reason": update_state["reason"],
+                    "source_trend_id": update_state.get("source_trend_id"),
+                    "change_timestamp": update_state["timestamp"]
+                }
+                self.add_to_batch_update(history_record)
+            # ИСПРАВЛЕНИЕ: НЕ создаем person_update - не обновляем таблицу persons напрямую
+            # Все изменения атрибутов сохраняются только в person_attribute_history
         logger.info(json.dumps({
             "event": "update_state_batch_processed",
             "batch_size": len(update_state_batch),
@@ -1219,23 +1242,10 @@ class SimulationEngine:
         """Добавляет обновление в batch очередь с агрегацией."""
         update_type = update.get("type")
         
-        if update_type == "person_state":
-            # Агрегируем обновления состояния агентов
-            person_id = str(update["id"])
-            if person_id not in self._aggregated_updates:
-                self._aggregated_updates[person_id] = {
-                    "type": "person_state",
-                    "id": update["id"],
-                    "reason": update.get("reason", "aggregated"),
-                    "timestamp": update.get("timestamp", self.current_time)
-                }
-            
-            # Обновляем только последние значения атрибутов
-            for key, value in update.items():
-                if key not in ["type", "id", "reason", "timestamp", "source_trend_id"]:
-                    self._aggregated_updates[person_id][key] = value
-                    
-        elif update_type == "attribute_history":
+        # ИСПРАВЛЕНИЕ: Убираем обработку person_state - не обновляем таблицу persons
+        # Все изменения атрибутов сохраняются только в person_attribute_history
+        
+        if update_type == "attribute_history":
             # Сохраняем все записи истории (не агрегируем)
             self._aggregated_history.append(update)
             
@@ -1283,7 +1293,6 @@ class SimulationEngine:
 
         # 2. Commit по общему количеству накопленных изменений
         total_updates = (
-            len(self._aggregated_updates) +
             len(self._aggregated_history) +
             len(self._aggregated_trends) +
             len(self._aggregated_trend_creations) +
@@ -1301,11 +1310,11 @@ class SimulationEngine:
         Теперь использует оптимизированные bulk-методы репозитория.
         """
         # Если нет накопленных изменений, выходим
-        if not self._aggregated_updates and not self._aggregated_history and not self._aggregated_trends and not self._aggregated_trend_creations and not self._aggregated_events:
+        if not self._aggregated_history and not self._aggregated_trends and not self._aggregated_trend_creations and not self._aggregated_events:
             return
 
         updates_count = (
-            len(self._aggregated_updates) + len(self._aggregated_history) +
+            len(self._aggregated_history) +
             len(self._aggregated_trends) + len(self._aggregated_trend_creations) + len(self._aggregated_events)
         )
         
@@ -1336,29 +1345,23 @@ class SimulationEngine:
                 history_models = [PersonAttributeHistory(**hr) for hr in history_cleaned]
                 await self.db_repo.bulk_create_person_attribute_history(history_models)
 
-            # 3. Обновления состояний агентов и участников
+            # 3. ИСПРАВЛЕНИЕ: Убираем обновления состояний агентов - не обновляем таблицу persons
+            # Все изменения атрибутов сохраняются только в person_attribute_history
+            # Оставляем только обновления simulation_participants для cooldown'ов и счетчиков
             if self._aggregated_updates:
-                person_updates_clean = []
                 participant_updates = []
                 
                 for update in self._aggregated_updates.values():
-                    person_update = {'id': update['id']}
                     participant_update = {'simulation_id': self.simulation_id, 'person_id': update['id']}
                     
                     for key, value in update.items():
                         if key not in ['type', 'id', 'reason', 'source_trend_id', 'timestamp']:
                             if key in ['last_post_ts', 'last_selfdev_ts', 'last_purchase_ts', 'purchases_today']:
                                 participant_update[key] = value
-                            else:
-                                person_update[key] = value
                     
-                    if len(person_update) > 1:
-                        person_updates_clean.append(person_update)
                     if len(participant_update) > 2:
                         participant_updates.append(participant_update)
                 
-                if person_updates_clean:
-                    await self.db_repo.bulk_update_persons(person_updates_clean)
                 if participant_updates:
                     await self.db_repo.bulk_update_simulation_participants(participant_updates)
 
@@ -1378,7 +1381,6 @@ class SimulationEngine:
                 "simulation_id": str(self.simulation_id),
                 "updates_count": updates_count,
                 "history_records": len(self._aggregated_history),
-                "person_updates": len(self._aggregated_updates),
                 "trend_updates": len(self._aggregated_trends),
                 "trend_creations": len(self._aggregated_trend_creations),
                 "events_created": len(self._aggregated_events),
@@ -1395,7 +1397,6 @@ class SimulationEngine:
             return
 
         # Очищаем агрегированные данные только после успешного коммита
-        self._aggregated_updates.clear()
         self._aggregated_history.clear()
         self._aggregated_trends.clear()
         self._aggregated_trend_creations.clear()

@@ -231,8 +231,23 @@ class EnergyRecoveryEvent(BaseEvent):
 
         for agent in engine.agents:
             if agent.energy_level < 5:
+                old_energy = agent.energy_level
                 agent.energy_level = min(5, agent.energy_level + recovery_amount)
                 self.recovered_agent_ids.append(str(agent.id))
+                
+                # ИСПРАВЛЕНИЕ: Создаем запись в person_attribute_history
+                engine.add_to_batch_update({
+                    "type": "attribute_history",
+                    "person_id": agent.id,
+                    "simulation_id": engine.simulation_id,
+                    "attribute_name": "energy_level",
+                    "old_value": old_energy,
+                    "new_value": agent.energy_level,
+                    "delta": recovery_amount,
+                    "reason": "EnergyRecovery",
+                    "source_trend_id": None,
+                    "change_timestamp": self.timestamp
+                })
         
         # ИСПРАВЛЕНИЕ: Проверяем время окончания симуляции перед планированием следующего события
         next_timestamp = self.timestamp + 5
@@ -317,15 +332,8 @@ class MorningRecoveryEvent(BaseEvent):
             # Apply effects
             agent.apply_effects(changes)
 
-            # Batch person_state update
-            update = {
-                "type": "person_state",
-                "id": agent.id,
-                "reason": "MorningRecovery",
-                "timestamp": self.timestamp,
-            }
-            update.update({k: getattr(agent, k) for k in changes.keys()})
-            engine.add_to_batch_update(update)
+            # ИСПРАВЛЕНИЕ: Убираем person_state update - не обновляем таблицу persons
+            # Все изменения атрибутов сохраняются только в person_attribute_history
 
             # Add attribute_history for each change
             for attr, delta in changes.items():
@@ -451,14 +459,27 @@ class PurchaseAction(BaseEvent):
         agent.purchases_today += 1
         agent.last_purchase_ts[self.purchase_level] = self.timestamp
         
-        # Add to batch updates (including v1.8 attributes)
+        # ИСПРАВЛЕНИЕ: Создаем записи в person_attribute_history для каждого измененного атрибута
+        # Сохраняем изменения атрибутов в историю
+        for attr_name, delta in purchase_effects.items():
+            old_value = getattr(agent, attr_name) - delta
+            engine.add_to_batch_update({
+                "type": "attribute_history",
+                "person_id": self.agent_id,
+                "simulation_id": engine.simulation_id,
+                "attribute_name": attr_name,
+                "old_value": old_value,
+                "new_value": getattr(agent, attr_name),
+                "delta": delta,
+                "reason": f"PurchaseAction_{self.purchase_level}",
+                "source_trend_id": None,
+                "change_timestamp": self.timestamp
+            })
+        
+        # Обновляем только tracking атрибуты в simulation_participants
         engine.add_to_batch_update({
             "type": "person_state",
             "id": self.agent_id,
-            "energy_level": agent.energy_level,
-            "time_budget": agent.time_budget,
-            "financial_capability": agent.financial_capability,
-            "social_status": agent.social_status,
             "purchases_today": agent.purchases_today,
             "last_purchase_ts": agent.last_purchase_ts,
             "reason": f"PurchaseAction_{self.purchase_level}",
@@ -504,12 +525,27 @@ class SelfDevAction(BaseEvent):
         # Update v1.8 tracking attributes
         agent.last_selfdev_ts = self.timestamp
         
-        # Add to batch updates (including v1.8 attributes)
+        # ИСПРАВЛЕНИЕ: Создаем записи в person_attribute_history для каждого измененного атрибута
+        # Сохраняем изменения атрибутов в историю
+        for attr_name, delta in effects.items():
+            old_value = getattr(agent, attr_name) - delta
+            engine.add_to_batch_update({
+                "type": "attribute_history",
+                "person_id": self.agent_id,
+                "simulation_id": engine.simulation_id,
+                "attribute_name": attr_name,
+                "old_value": old_value,
+                "new_value": getattr(agent, attr_name),
+                "delta": delta,
+                "reason": "SelfDevAction",
+                "source_trend_id": None,
+                "change_timestamp": self.timestamp
+            })
+        
+        # Обновляем только tracking атрибуты в simulation_participants
         engine.add_to_batch_update({
             "type": "person_state",
             "id": self.agent_id,
-            "energy_level": agent.energy_level,
-            "time_budget": agent.time_budget,
             "last_selfdev_ts": agent.last_selfdev_ts,
             "reason": "SelfDevAction",
             "timestamp": self.timestamp
