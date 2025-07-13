@@ -69,10 +69,16 @@ class SimulationEngine:
         self.affinity_map: Dict[str, Dict[str, float]] = {}
         
         # Performance tracking
-        self._batch_updates: List[Dict] = []
         self._last_commit_time: float = 0.0
         self._last_batch_commit: float = 0.0
         self._simulation_start_real: float = 0.0
+        
+        # ИСПРАВЛЕНИЕ: Агрегация batch updates для оптимизации производительности
+        self._aggregated_updates: Dict[str, Dict] = {}  # person_id -> aggregated_update
+        self._aggregated_history: List[Dict] = []  # attribute history records
+        self._aggregated_trends: List[Dict] = []  # trend interactions
+        self._aggregated_trend_creations: List[Dict] = []  # new trends
+        self._aggregated_events: List[Dict] = [] # new events
         
         # Configuration from settings
         self.batch_size = settings.BATCH_SIZE
@@ -89,6 +95,9 @@ class SimulationEngine:
         
         # НОВОЕ: Флаг для принудительного commit после определенных событий
         self._force_commit_after_this_event = False
+        
+        # ИСПРАВЛЕНИЕ: Добавляем время окончания симуляции для предотвращения бесконечных циклов
+        self.end_time: Optional[float] = None
         
         # Ensure test repositories provide all async methods used later
         _needed_methods = [
@@ -408,6 +417,14 @@ class SimulationEngine:
         self.add_event(night_event, EventPriority.SYSTEM, night_event.timestamp)
         self.add_event(morning_event, EventPriority.SYSTEM, morning_event.timestamp)
         
+        # v1.9: ИСПРАВЛЕНИЕ - убираем пассивное восстановление энергии каждые 5 минут
+        # Восстановление энергии происходит только утром через MorningRecoveryEvent
+        logger.info(json.dumps({
+            "event": "system_events_scheduled",
+            "events": ["DailyResetEvent", "SaveDailyTrendEvent", "NightCycleEvent", "MorningRecoveryEvent"],
+            "note": "EnergyRecoveryEvent disabled per v1.9 spec"
+        }, default=str))
+        
     async def run_simulation(self, duration_days: float = 1.0) -> None:
         """
         Запускает основной цикл симуляции.
@@ -419,7 +436,8 @@ class SimulationEngine:
             raise RuntimeError("Simulation not initialized. Call initialize() first.")
             
         self._running = True
-        end_time = duration_days * 1440.0  # Конвертируем дни в минуты
+        self.end_time = duration_days * 1440.0  # Конвертируем дни в минуты
+        end_time = self.end_time  # Для обратной совместимости с существующим кодом
         self._simulation_start_real = time.time()
         
         logger.info(json.dumps({
@@ -450,40 +468,75 @@ class SimulationEngine:
         }, default=str))
         
         try:
+            last_time_update = self.current_time
+            stagnation_counter = 0
+            
             while self._running and self.current_time < end_time:
-                # Обработать следующее событие из очереди
-                if self.event_queue:
-                    priority_event = heapq.heappop(self.event_queue)
+                priority_event = heapq.heappop(self.event_queue)
+                event_timestamp = priority_event.timestamp
+
+                if settings.ENABLE_REALTIME and self.current_time > 0:
+                    sim_time_delta = event_timestamp - self.current_time
+                    if sim_time_delta > 0:
+                        sleep_duration = (sim_time_delta * 60) / settings.SIM_SPEED_FACTOR
+                        await asyncio.sleep(sleep_duration)
+
+                # Проверяем, не вышли ли мы за пределы времени симуляции
+                if event_timestamp > end_time:
+                    # Возвращаем событие в очередь, так как оно не должно быть обработано
+                    heapq.heappush(self.event_queue, priority_event)
+                    logger.info(json.dumps({
+                        "event": "simulation_ending_event_time_limit",
+                        "current_time": self.current_time,
+                        "next_event_time": priority_event.timestamp,
+                        "end_time": end_time,
+                        "events_processed": events_processed,
+                        "queue_size": len(self.event_queue)
+                    }, default=str))
+                    break
                     
-                    # Проверяем, не вышли ли мы за пределы времени симуляции
-                    if priority_event.timestamp > end_time:
-                        # Возвращаем событие в очередь и завершаем симуляцию
-                        heapq.heappush(self.event_queue, priority_event)
-                        break
+                    # ИСПРАВЛЕНИЕ: Защита от зависания времени - принудительно продвигаем время
+                if priority_event.timestamp == self.current_time:
+                    stagnation_counter += 1
+                    if stagnation_counter > 100:  # Если обрабатываем более 100 событий с одинаковым временем
+                        logger.warning(json.dumps({
+                            "event": "time_stagnation_detected",
+                            "current_time": self.current_time,
+                            "stagnation_counter": stagnation_counter,
+                            "forcing_time_advance": True
+                        }, default=str))
+                        # Принудительно продвигаем время на 0.1 минуты
+                        self.current_time += 0.1
+                        stagnation_counter = 0
+                else:
+                    stagnation_counter = 0
                     
                     # Конвертировать sim_time в real_time для realtime режима
-                    if priority_event.event.timestamp_real is None:
-                        priority_event.event.timestamp_real = (
-                            self._simulation_start_real + 
-                            priority_event.timestamp * 60.0 / settings.SIM_SPEED_FACTOR
-                        )
+                if priority_event.event.timestamp_real is None:
+                    priority_event.event.timestamp_real = (
+                        self._simulation_start_real + 
+                        priority_event.timestamp * 60.0 / settings.SIM_SPEED_FACTOR
+                    )
                     
                     # Ожидание до времени события в realtime режиме
-                    if settings.ENABLE_REALTIME:
-                        await self.clock.sleep_until(priority_event.timestamp)
+                if settings.ENABLE_REALTIME:
+                    await self.clock.sleep_until(priority_event.timestamp)
                     
-                    self.current_time = priority_event.timestamp
+                self.current_time = priority_event.timestamp
                     
                     # Обработать событие
-                    await self._process_event(priority_event.event)
-                    events_processed += 1
+                await self._process_event(priority_event.event)
+                events_processed += 1
                     
-                    # Проверить batch commit
-                    if self._should_commit_batch():
-                        await self._batch_commit_states()
+                                    # Проверить batch commit
+                # ИСПРАВЛЕНИЕ: Используем агрегированные обновления для оптимизации
+                if self._should_commit_batch():
+                    await self._batch_commit_states()
                 
                 # Запланировать новые действия агентов после каждого события
-                if events_processed % 5 == 0:  # Каждые 5 событий планируем действия агентов
+                # ИСПРАВЛЕНИЕ: Не планируем новые действия если близко к времени окончания
+                if (events_processed % 5 == 0 and  # Каждые 5 событий планируем действия агентов
+                    self.current_time < (self.end_time - 60.0)):  # Останавливаем планирование за 60 минут до конца
                     scheduled = await self._schedule_agent_actions()
                     agent_actions_scheduled += scheduled
                     # Логируем состояние очереди каждые 50 событий
@@ -500,7 +553,8 @@ class SimulationEngine:
                     break
                 
                 # Минимальная пауза для cooperative multitasking
-                await asyncio.sleep(0.001 if not settings.ENABLE_REALTIME else 0.1 / max(1.0, settings.SIM_SPEED_FACTOR))
+                # ИСПРАВЛЕНИЕ: Убираем паузу для максимальной скорости симуляции
+                # await asyncio.sleep(0.01 if not settings.ENABLE_REALTIME else 0.1 / max(1.0, settings.SIM_SPEED_FACTOR))
                 
         except Exception as e:
             logger.error(json.dumps({
@@ -511,7 +565,18 @@ class SimulationEngine:
             }, default=str))
             raise
         finally:
-            # Финальный batch commit
+            # Финальный batch commit - все изменения сохраняются в конце симуляции
+            pending_updates = (
+                len(self._aggregated_updates) +
+                len(self._aggregated_history) +
+                len(self._aggregated_trends) +
+                len(self._aggregated_trend_creations)
+            )
+            logger.info(json.dumps({
+                "event": "final_batch_commit_starting",
+                "pending_updates": pending_updates,
+                "current_time": self.current_time
+            }, default=str))
             await self._batch_commit_states()
             
             # ИСПРАВЛЕНИЕ: Обновить статус симуляции на COMPLETED с end_time
@@ -858,6 +923,17 @@ class SimulationEngine:
         from capsim.simulation.actions.factory import ACTION_FACTORY
         import random
         
+        # ИСПРАВЛЕНИЕ: Не планируем новые действия если близко к времени окончания
+        if self.end_time is not None and self.current_time >= (self.end_time - 45.0):
+            logger.info(json.dumps({
+                "event": "agent_actions_scheduling_stopped",
+                "reason": "approaching_simulation_end",
+                "current_time": self.current_time,
+                "end_time": self.end_time,
+                "time_remaining": self.end_time - self.current_time
+            }, default=str))
+            return 0
+        
         scheduled_count = 0
         context = SimulationContext(
             current_time=self.current_time,
@@ -970,6 +1046,10 @@ class SimulationEngine:
 
         if not self.agents:
             return 0
+            
+        # ИСПРАВЛЕНИЕ: Не планируем wellness действия если близко к времени окончания
+        if self.end_time is not None and self.current_time >= (self.end_time - 30.0):
+            return 0
 
         # Приблизимся к 10 % агентов каждый сим-час (60 минут).
         # Метод вызывается раз в несколько минут, поэтому вероятность масштабируем.
@@ -988,6 +1068,7 @@ class SimulationEngine:
 
             if action.can_execute(agent, self.current_time):
                 try:
+                    # ИСПРАВЛЕНИЕ: Не применяем эффекты сразу - только планируем событие
                     action.execute(agent, self)
                     actions_planned += 1
                 except Exception:
@@ -1004,6 +1085,18 @@ class SimulationEngine:
             priority: Приоритет события (1-5)
             timestamp: Время выполнения
         """
+        # ИСПРАВЛЕНИЕ: Проверяем время окончания симуляции перед добавлением события
+        if self.end_time is not None and timestamp >= self.end_time:
+            logger.info(json.dumps({
+                "event": "event_rejected_past_end_time",
+                "event_type": event.__class__.__name__,
+                "timestamp": timestamp,
+                "end_time": self.end_time,
+                "agent_id": str(getattr(event, 'agent_id', None)),
+                "topic": getattr(event, 'topic', None)
+            }, default=str))
+            return
+        
         logger.info(json.dumps({
             "event": "adding_event_to_queue",
             "event_type": event.__class__.__name__,
@@ -1018,172 +1111,190 @@ class SimulationEngine:
         heapq.heappush(self.event_queue, priority_event)
         
     def add_to_batch_update(self, update: Dict[str, Any]) -> None:
-        """Добавляет обновление в batch очередь."""
-        self._batch_updates.append(update)
+        """Добавляет обновление в batch очередь с агрегацией."""
+        update_type = update.get("type")
+        
+        if update_type == "person_state":
+            # Агрегируем обновления состояния агентов
+            person_id = str(update["id"])
+            if person_id not in self._aggregated_updates:
+                self._aggregated_updates[person_id] = {
+                    "type": "person_state",
+                    "id": update["id"],
+                    "reason": update.get("reason", "aggregated"),
+                    "timestamp": update.get("timestamp", self.current_time)
+                }
+            
+            # Обновляем только последние значения атрибутов
+            for key, value in update.items():
+                if key not in ["type", "id", "reason", "timestamp", "source_trend_id"]:
+                    self._aggregated_updates[person_id][key] = value
+                    
+        elif update_type == "attribute_history":
+            # Сохраняем все записи истории (не агрегируем)
+            self._aggregated_history.append(update)
+            
+        elif update_type == "trend_interaction":
+            # Агрегируем взаимодействия с трендами
+            trend_id = str(update["trend_id"])
+            existing = next((t for t in self._aggregated_trends if t["trend_id"] == trend_id), None)
+            if existing:
+                existing["interaction_count"] = existing.get("interaction_count", 1) + 1
+            else:
+                self._aggregated_trends.append({
+                    "trend_id": update["trend_id"],
+                    "interaction_count": 1
+                })
+                
+        elif update_type == "trend_creation":
+            # Сохраняем создание трендов
+            self._aggregated_trend_creations.append(update)
+            
+        elif update_type == "event":
+            # Сохраняем события
+            self._aggregated_events.append(update)
+            
+    def should_schedule_future_event(self, timestamp: float) -> bool:
+        """
+        Проверяет, следует ли планировать событие на указанное время.
+        
+        Args:
+            timestamp: Время события в минутах симуляции
+            
+        Returns:
+            True если событие следует планировать, False иначе
+        """
+        if self.end_time is None:
+            return True
+        return timestamp < self.end_time
         
     def _should_commit_batch(self) -> bool:
-        """Проверяет нужно ли выполнить batch commit."""
-        # Commit по размеру
-        if len(self._batch_updates) >= self.batch_size:
+        """Проверяет, нужно ли выполнить batch commit."""
+        
+        # 1. Commit по времени: каждые 10 симуляционных минут
+        time_since_last_commit = self.current_time - self._last_batch_commit
+        if time_since_last_commit >= 10.0:
             return True
-            
-        # Commit по времени (адаптированному к realtime режиму)
-        if settings.ENABLE_REALTIME:
-            # В realtime режиме используем wall-clock время
-            time_since_last = time.time() - self._last_commit_time
-            timeout_seconds = settings.get_batch_timeout_seconds()
-            if time_since_last >= timeout_seconds:
-                return True
-        else:
-            # В fast режиме используем sim время
-            if self.current_time - self._last_batch_commit >= self.batch_timeout_minutes:
-                return True
+
+        # 2. Commit по общему количеству накопленных изменений
+        total_updates = (
+            len(self._aggregated_updates) +
+            len(self._aggregated_history) +
+            len(self._aggregated_trends) +
+            len(self._aggregated_trend_creations)
+        )
+        
+        if total_updates >= self.batch_size: # self.batch_size is 1000 from settings
+            return True
             
         return False
         
     async def _batch_commit_states(self) -> None:
         """
-        Выполняет batch commit накопленных обновлений состояния.
-        
-        ВАЖНО: Сохраняет изменения в person_attribute_history и обновляет состояния агентов.
-        
-        Включает ретраи с экспоненциальным backoff при ошибках.
+        Выполняет batch commit накопленных обновлений состояния с агрегацией.
+        Теперь использует оптимизированные bulk-методы репозитория.
         """
-        if not self._batch_updates:
+        # Если нет накопленных изменений, выходим
+        if not self._aggregated_updates and not self._aggregated_history and not self._aggregated_trends and not self._aggregated_trend_creations:
             return
-            
-        updates_count = len(self._batch_updates)
-        retry_attempts = settings.BATCH_RETRY_ATTEMPTS
-        backoffs = settings.get_batch_retry_backoffs()
+
+        updates_count = (
+            len(self._aggregated_updates) + len(self._aggregated_history) +
+            len(self._aggregated_trends) + len(self._aggregated_trend_creations)
+        )
         
-        for attempt in range(retry_attempts):
-            try:
-                start_time = time.time()
+        start_time = time.time()
+        
+        try:
+            # 1. Создание новых трендов (ВАЖНО: должно быть первым)
+            if self._aggregated_trend_creations:
+                # Очищаем данные от полей, которых нет в модели Trend
+                trends_cleaned = []
+                for trend_data in self._aggregated_trend_creations:
+                    cleaned_data = trend_data.copy()
+                    cleaned_data.pop("type", None)
+                    cleaned_data.pop("timestamp", None)
+                    trends_cleaned.append(cleaned_data)
+                await self.db_repo.bulk_create_trends(trends_cleaned)
+
+            # 2. Обновления истории атрибутов
+            if self._aggregated_history:
+                from ..db.models import PersonAttributeHistory
+                # Очищаем историю от полей, которых нет в модели
+                history_cleaned = []
+                for hr in self._aggregated_history:
+                    cleaned_hr = hr.copy()
+                    cleaned_hr.pop("type", None) # Удаляем ключ 'type', если он есть
+                    history_cleaned.append(cleaned_hr)
                 
-                # Разделить обновления по типам
-                person_updates = [u for u in self._batch_updates if u.get("type") == "person_state"]
-                history_records = [u for u in self._batch_updates if u.get("type") == "attribute_history"]
-                trend_updates = [u for u in self._batch_updates if u.get("type") == "trend_interaction"]
-                trend_creations = [u for u in self._batch_updates if u.get("type") == "trend_creation"]
+                history_models = [PersonAttributeHistory(**hr) for hr in history_cleaned]
+                await self.db_repo.bulk_create_person_attribute_history(history_models)
+
+            # 3. Обновления состояний агентов и участников
+            if self._aggregated_updates:
+                person_updates_clean = []
+                participant_updates = []
                 
-                # ИСПРАВЛЕНИЕ: Сохранить записи истории атрибутов пакетом
-                if history_records:
-                    from ..db.models import PersonAttributeHistory
-                    history_models = [
-                        PersonAttributeHistory(
-                            person_id=hr["person_id"],
-                            simulation_id=hr["simulation_id"],
-                            attribute_name=hr["attribute_name"],
-                            old_value=hr["old_value"],
-                            new_value=hr["new_value"],
-                            delta=hr["delta"],
-                            reason=hr["reason"],
-                            source_trend_id=hr.get("source_trend_id"),
-                            change_timestamp=hr["change_timestamp"],
-                        )
-                        for hr in history_records
-                    ]
-                    await self.db_repo.bulk_create_person_attribute_history(history_models)
-                
-                # ИСПРАВЛЕНИЕ: Обновить состояния агентов
-                if person_updates:
-                    # Разделяем обновления на Person и SimulationParticipant
-                    person_updates_clean = []
-                    participant_updates = []
+                for update in self._aggregated_updates.values():
+                    person_update = {'id': update['id']}
+                    participant_update = {'simulation_id': self.simulation_id, 'person_id': update['id']}
                     
-                    for update in person_updates:
-                        # Обновления для таблицы Person
-                        person_update = {
-                            'id': update['id'],
-                        }
-                        # Обновления для таблицы SimulationParticipant
-                        participant_update = {
-                            'simulation_id': self.simulation_id,
-                            'person_id': update['id'],
-                        }
-                        
-                        # Распределяем поля по таблицам
-                        for key, value in update.items():
-                            if key not in ['type', 'id', 'reason', 'source_trend_id', 'timestamp']:
-                                if key in ['last_post_ts', 'last_selfdev_ts', 'last_purchase_ts', 'purchases_today']:
-                                    # Эти поля идут в SimulationParticipant
-                                    participant_update[key] = value
-                                else:
-                                    # Остальные поля идут в Person
-                                    person_update[key] = value
-                        
-                        if len(person_update) > 1:  # Есть поля для Person
-                            person_updates_clean.append(person_update)
-                        if len(participant_update) > 2:  # Есть поля для SimulationParticipant
-                            participant_updates.append(participant_update)
+                    for key, value in update.items():
+                        if key not in ['type', 'id', 'reason', 'source_trend_id', 'timestamp']:
+                            if key in ['last_post_ts', 'last_selfdev_ts', 'last_purchase_ts', 'purchases_today']:
+                                participant_update[key] = value
+                            else:
+                                person_update[key] = value
                     
-                    # Обновляем Person
-                    if person_updates_clean:
-                        await self.db_repo.bulk_update_persons(person_updates_clean)
-                    
-                    # Обновляем SimulationParticipant
-                    if participant_updates:
-                        await self.db_repo.bulk_update_simulation_participants(participant_updates)
+                    if len(person_update) > 1:
+                        person_updates_clean.append(person_update)
+                    if len(participant_update) > 2:
+                        participant_updates.append(participant_update)
                 
-                # ИСПРАВЛЕНИЕ: Создать новые тренды в БД
-                if trend_creations:
-                    from ..db.models import Trend as DBTrend
-                    for trend_data in trend_creations:
-                        # Создаем DB модель из данных
-                        db_trend = DBTrend(
-                            trend_id=trend_data["trend_id"],
-                            simulation_id=trend_data["simulation_id"],
-                            topic=trend_data["topic"],
-                            originator_id=trend_data["originator_id"],
-                            base_virality_score=trend_data["base_virality_score"],
-                            coverage_level=trend_data["coverage_level"],
-                            sentiment=trend_data["sentiment"],
-                        )
-                        await self.db_repo.create_trend(db_trend)
+                if person_updates_clean:
+                    await self.db_repo.bulk_update_persons(person_updates_clean)
+                if participant_updates:
+                    await self.db_repo.bulk_update_simulation_participants(participant_updates)
+
+            # 4. Обновление счетчиков взаимодействий с трендами
+            if self._aggregated_trends:
+                trend_ids_to_increment = [t["trend_id"] for t in self._aggregated_trends]
+                await self.db_repo.bulk_increment_trend_interactions(trend_ids_to_increment)
+
+            # 5. Создание событий (ВАЖНО: должно быть после создания трендов)
+            if self._aggregated_events:
+                await self.db_repo.bulk_create_events(self._aggregated_events)
                 
-                # ИСПРАВЛЕНИЕ: Сохранить взаимодействия с трендами
-                if trend_updates:
-                    for update in trend_updates:
-                        await self.db_repo.increment_trend_interactions(update["trend_id"])
-                
-                commit_time = (time.time() - start_time) * 1000
-                
-                # Очистить batch
-                self._batch_updates.clear()
-                self._last_batch_commit = self.current_time
-                
-                logger.info(json.dumps({
-                    "event": "batch_commit_success",
-                    "simulation_id": str(self.simulation_id),
-                    "updates_count": updates_count,
-                    "history_records": len(history_records),
-                    "person_updates": len(person_updates),
-                    "trend_updates": len(trend_updates),
-                    "trend_creations": len(trend_creations),
-                    "commit_time_ms": commit_time,
-                    "attempt": attempt + 1
-                }, default=str))
-                return
-                
-            except Exception as e:
-                if attempt < retry_attempts - 1:
-                    backoff_time = backoffs[min(attempt, len(backoffs) - 1)]
-                    logger.warning(json.dumps({
-                        "event": "batch_commit_retry",
-                        "error": str(e),
-                        "attempt": attempt + 1,
-                        "backoff_seconds": backoff_time
-                    }, default=str))
-                    await asyncio.sleep(backoff_time)
-                else:
-                    logger.error(json.dumps({
-                        "event": "batch_commit_failed",
-                        "error": str(e),
-                        "updates_lost": updates_count,
-                        "final_attempt": attempt + 1
-                    }, default=str))
-                    # Очистить batch даже при ошибке, чтобы избежать накопления
-                    self._batch_updates.clear()
+            commit_time = (time.time() - start_time) * 1000
+            
+            logger.info(json.dumps({
+                "event": "batch_commit_success",
+                "simulation_id": str(self.simulation_id),
+                "updates_count": updates_count,
+                "history_records": len(self._aggregated_history),
+                "person_updates": len(self._aggregated_updates),
+                "trend_updates": len(self._aggregated_trends),
+                "trend_creations": len(self._aggregated_trend_creations),
+                "events_created": len(self._aggregated_events),
+                "commit_time_ms": commit_time,
+            }, default=str))
+
+        except Exception as e:
+            logger.error(json.dumps({
+                "event": "batch_commit_failed",
+                "error": str(e),
+                "updates_lost": updates_count,
+            }, default=str))
+            # В случае ошибки не очищаем, чтобы попробовать снова
+            return
+
+        # Очищаем агрегированные данные только после успешного коммита
+        self._aggregated_updates.clear()
+        self._aggregated_history.clear()
+        self._aggregated_trends.clear()
+        self._aggregated_trend_creations.clear()
+        self._aggregated_events.clear()
+        self._last_batch_commit = self.current_time
         
     async def archive_inactive_trends(self) -> None:
         """
@@ -1226,7 +1337,12 @@ class SimulationEngine:
             "total_agents": len(self.agents),
             "active_trends": len(self.active_trends),
             "queue_size": len(self.event_queue),
-            "pending_batches": len(self._batch_updates),
+            "pending_batches": (
+                len(self._aggregated_updates) +
+                len(self._aggregated_history) +
+                len(self._aggregated_trends) +
+                len(self._aggregated_trend_creations)
+            ),
             "running": self._running
         }
         
@@ -1277,7 +1393,12 @@ class SimulationEngine:
             "method": method,
             "current_time": self.current_time,
             "queue_size": len(self.event_queue),
-            "pending_batches": len(self._batch_updates)
+            "pending_batches": (
+                len(self._aggregated_updates) +
+                len(self._aggregated_history) +
+                len(self._aggregated_trends) +
+                len(self._aggregated_trend_creations)
+            )
         }, default=str))
         
         if method == "graceful":

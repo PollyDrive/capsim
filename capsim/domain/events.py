@@ -10,6 +10,7 @@ import json
 import logging
 from enum import IntEnum
 import sys
+import random
 
 if TYPE_CHECKING:
     from ..engine.simulation_engine import SimulationEngine
@@ -235,8 +236,19 @@ class EnergyRecoveryEvent(BaseEvent):
             if agent.energy_level < 5:
                 agent.energy_level = min(5, agent.energy_level + recovery_amount)
                 self.recovered_agent_ids.append(str(agent.id))
-        next = EnergyRecoveryEvent(self.timestamp + 5)
-        engine.add_event(next, EventPriority.ENERGY_RECOVERY, next.timestamp)
+        
+        # ИСПРАВЛЕНИЕ: Проверяем время окончания симуляции перед планированием следующего события
+        next_timestamp = self.timestamp + 5
+        if engine.should_schedule_future_event(next_timestamp):
+            next = EnergyRecoveryEvent(next_timestamp)
+            engine.add_event(next, EventPriority.ENERGY_RECOVERY, next_timestamp)
+        else:
+            logger.info(json.dumps({
+                "event": "energy_recovery_cycle_ended",
+                "reason": "simulation_end_time_reached",
+                "timestamp": self.timestamp,
+                "end_time": engine.end_time
+            }, default=str))
         
         logger.info(json.dumps({
             "event": "energy_recovery_completed",
@@ -257,9 +269,18 @@ class NightCycleEvent(BaseEvent):
         super().__init__(EventPriority.SYSTEM, timestamp)
 
     def process(self, engine: "SimulationEngine") -> None:
-        # Schedule next night cycle in 24h
-        next_night = NightCycleEvent(self.timestamp + 1440.0)
-        engine.add_event(next_night, EventPriority.SYSTEM, next_night.timestamp)
+        # ИСПРАВЛЕНИЕ: Проверяем время окончания симуляции перед планированием следующего события
+        next_timestamp = self.timestamp + 1440.0
+        if engine.should_schedule_future_event(next_timestamp):
+            next_night = NightCycleEvent(next_timestamp)
+            engine.add_event(next_night, EventPriority.SYSTEM, next_timestamp)
+        else:
+            logger.info(json.dumps({
+                "event": "night_cycle_ended",
+                "reason": "simulation_end_time_reached",
+                "timestamp": self.timestamp,
+                "end_time": engine.end_time
+            }, default=str))
 
         logger.info(json.dumps({
             "event": "night_cycle_start",
@@ -325,9 +346,18 @@ class MorningRecoveryEvent(BaseEvent):
                 })
             recovered += 1
 
-        # Schedule next morning recovery in 24h
-        next_morning = MorningRecoveryEvent(self.timestamp + 1440.0)
-        engine.add_event(next_morning, EventPriority.SYSTEM, next_morning.timestamp)
+        # ИСПРАВЛЕНИЕ: Проверяем время окончания симуляции перед планированием следующего события
+        next_timestamp = self.timestamp + 1440.0
+        if engine.should_schedule_future_event(next_timestamp):
+            next_morning = MorningRecoveryEvent(next_timestamp)
+            engine.add_event(next_morning, EventPriority.SYSTEM, next_timestamp)
+        else:
+            logger.info(json.dumps({
+                "event": "morning_recovery_cycle_ended",
+                "reason": "simulation_end_time_reached",
+                "timestamp": self.timestamp,
+                "end_time": engine.end_time
+            }, default=str))
 
         logger.info(json.dumps({
             "event": "morning_recovery_completed",
@@ -360,16 +390,27 @@ class DailyResetEvent(BaseEvent):
             if reset_done:
                 reset_count += 1
         
-        # Schedule next daily reset (every 1440 minutes = 24 hours)
-        next_reset = DailyResetEvent(timestamp=self.timestamp + 1440.0)
-        engine.add_event(next_reset, EventPriority.SYSTEM, next_reset.timestamp)
+        # ИСПРАВЛЕНИЕ: Проверяем время окончания симуляции перед планированием следующего события
+        next_timestamp = self.timestamp + 1440.0
+        if engine.should_schedule_future_event(next_timestamp):
+            next_reset = DailyResetEvent(timestamp=next_timestamp)
+            engine.add_event(next_reset, EventPriority.SYSTEM, next_timestamp)
+            next_reset_log = next_timestamp
+        else:
+            logger.info(json.dumps({
+                "event": "daily_reset_cycle_ended",
+                "reason": "simulation_end_time_reached",
+                "timestamp": self.timestamp,
+                "end_time": engine.end_time
+            }, default=str))
+            next_reset_log = None
         
         logger.info(json.dumps({
             "event": "daily_reset_completed",
             "reset_agents": reset_count,
             "total_agents": len(engine.agents),
             "timestamp": self.timestamp,
-            "next_reset": next_reset.timestamp
+            "next_reset": next_reset_log
         }, default=str))
 
 
@@ -511,9 +552,18 @@ class SaveDailyTrendEvent(BaseEvent):
                 stats["max_virality"] = current_virality
                 stats["top_trend"] = trend.trend_id
         
-        # Запланировать следующее сохранение статистики
-        next_save = SaveDailyTrendEvent(self.timestamp + 1440.0)
-        engine.add_event(next_save, EventPriority.SYSTEM, next_save.timestamp)
+        # ИСПРАВЛЕНИЕ: Проверяем время окончания симуляции перед планированием следующего события
+        next_timestamp = self.timestamp + 1440.0
+        if engine.should_schedule_future_event(next_timestamp):
+            next_save = SaveDailyTrendEvent(next_timestamp)
+            engine.add_event(next_save, EventPriority.SYSTEM, next_timestamp)
+        else:
+            logger.info(json.dumps({
+                "event": "daily_trend_save_cycle_ended",
+                "reason": "simulation_end_time_reached",
+                "timestamp": self.timestamp,
+                "end_time": engine.end_time
+            }, default=str))
         
         logger.info(json.dumps({
             "event": "daily_trends_saved",
@@ -631,60 +681,48 @@ class TrendInfluenceEvent(BaseEvent):
         """
         Обрабатывает распространение влияния тренда через пакеты updatestate.
         """
-        # Найти тренд
+        # Найти тренд в активных трендах движка
         trend = engine.active_trends.get(str(self.trend_id))
+        
         if not trend:
             logger.warning(json.dumps({
-                "event": "trend_not_found",
+                "event": "trend_not_found_in_active_list",
                 "trend_id": str(self.trend_id),
                 "timestamp": self.timestamp
             }, default=str))
             return
-            
-        # Дополнительная проверка: убедиться что тренд существует в базе данных
-        try:
-            # Проверяем что тренд действительно существует
-            if not hasattr(trend, 'trend_id') or not trend.trend_id:
-                logger.warning(json.dumps({
-                    "event": "trend_invalid_id",
-                    "trend_id": str(self.trend_id),
-                    "timestamp": self.timestamp
-                }, default=str))
-                return
-        except Exception as e:
-            logger.error(json.dumps({
-                "event": "trend_validation_error",
+
+        # ИСПРАВЛЕНИЕ: Предотвращаем лавинообразный рост событий, ограничивая "вирусность"
+        if trend.total_interactions > 100:
+            logger.info(json.dumps({
+                "event": "trend_influence_skipped",
+                "reason": "interaction_limit_exceeded",
                 "trend_id": str(self.trend_id),
-                "error": str(e),
+                "total_interactions": trend.total_interactions,
                 "timestamp": self.timestamp
             }, default=str))
             return
             
-        # Рассчитываем параметры влияния (оставляем существующую вероятностную модель)
-        current_virality = trend.calculate_current_virality()
-        coverage_factor = trend.get_coverage_factor()
+        # 1. Определяем, кто из агентов "увидит" этот тренд
+        # Используем `coverage_level` для определения количества затронутых агентов
+        audience_size = int(len(engine.agents) * trend.get_coverage_factor())
+        potential_audience = random.sample(engine.agents, min(len(engine.agents), audience_size))
         
-        # Создаем пакеты updatestate для всех затронутых агентов
-        update_state_batch = []
-        new_actions_batch = []
-        influenced_agents = 0
+        # 2. Обрабатываем влияние на каждого "увидевшего" агента
+        update_states = []
+        response_actions = []
+        influenced_agents_count = 0
         
-        for agent in engine.agents:
-            # Агент не влияет сам на себя
+        # ИСПРАВЛЕНИЕ: Радикально уменьшаем вероятность ответа, чтобы остановить лавину
+        likeliness_to_respond = 0.05  # было 0.2
+        
+        for agent in potential_audience:
             if agent.id == trend.originator_id:
-                continue
-                
-            # Проверка вероятности влияния (улучшенная формула для Phase 3)
-            influence_probability = min(0.8, (
-                current_virality / 5.0 * 
-                coverage_factor * 
-                agent.trend_receptivity / 5.0 * 
-                agent.get_affinity_for_topic(trend.topic) / 5.0 * 
-                2.5  # ИСПРАВЛЕНИЕ: Мультипликатор для увеличения вероятности влияния
-            ))
-            
-            import random
-            if random.random() < influence_probability:
+                continue # Автор не влияет сам на себя
+
+            # Проверяем, может ли агент вообще увидеть этот тренд
+            # ИСПРАВЛЕНИЕ: Улучшаем логику проверки возможности влияния
+            if agent.trend_receptivity > 0.5 and agent.get_affinity_for_topic(trend.topic) > 3.0:
                 # Определяем соответствие интересов
                 from capsim.common.topic_mapping import topic_to_interest_category
                 try:
@@ -708,14 +746,14 @@ class TrendInfluenceEvent(BaseEvent):
                     "source_trend_id": trend.trend_id,
                     "timestamp": self.timestamp
                 }
-                update_state_batch.append(update_state)
+                update_states.append(update_state)
                 
                 # Применяем изменения к агенту
                 agent.update_state(attribute_changes)
                 
                 # Добавляем взаимодействие с трендом
                 trend.add_interaction()
-                influenced_agents += 1
+                influenced_agents_count += 1
                 
                 # ИСПРАВЛЕНИЕ: Добавляем обновление тренда в batch
                 engine.add_to_batch_update({
@@ -729,10 +767,10 @@ class TrendInfluenceEvent(BaseEvent):
                 agent.exposure_history[str(trend.trend_id)] = self.timestamp
                 
                 # Проверяем возможность создания ответного действия
-                # Вероятность ответа оставляем прежней
+                # ИСПРАВЛЕНИЕ: Еще сильнее снижаем вероятность ответного поста
                 response_probability = (
-                    current_virality / 5.0 * agent.social_status / 5.0 * 1.2
-                )
+                    trend.calculate_current_virality() / 5.0 * agent.social_status / 5.0 * likeliness_to_respond
+                ) / 2.0 # Дополнительно делим на 2
                 
                 if (random.random() < response_probability and 
                     agent.energy_level >= 0.3 and  # ИСПРАВЛЕНИЕ: Еще больше снижаем требования к энергии
@@ -744,35 +782,47 @@ class TrendInfluenceEvent(BaseEvent):
                     # Создаем будущее действие с parent_trend_id только если тренд существует
                     if trend and trend.trend_id:
                         response_delay = random.uniform(10.0, 60.0)
-                        new_action = {
-                            "agent_id": agent.id,
-                            "action_type": "PublishPostAction",
-                            "topic": response_topic,
-                            "timestamp": self.timestamp + response_delay,
-                            "trigger_trend_id": trend.trend_id  # Указываем что это ответ на тренд
-                        }
-                        new_actions_batch.append(new_action)
+                        response_timestamp = self.timestamp + response_delay
+                        
+                        # ИСПРАВЛЕНИЕ: Проверяем время окончания симуляции перед планированием ответного поста
+                        if engine.should_schedule_future_event(response_timestamp):
+                            new_action = {
+                                "agent_id": agent.id,
+                                "action_type": "PublishPostAction",
+                                "topic": response_topic,
+                                "timestamp": response_timestamp,
+                                "trigger_trend_id": trend.trend_id  # Указываем что это ответ на тренд
+                            }
+                            response_actions.append(new_action)
+                        else:
+                            logger.debug(json.dumps({
+                                "event": "response_post_rejected_past_end_time",
+                                "agent_id": str(agent.id),
+                                "response_timestamp": response_timestamp,
+                                "end_time": engine.end_time,
+                                "trend_id": str(trend.trend_id)
+                            }, default=str))
                     
                     # ИСПРАВЛЕНИЕ: Увеличиваем total_interactions у родительского тренда
                     trend.add_interaction()
         
         # --------------- PostEffect для автора ----------------
-        author_effect_update = self._calculate_author_post_effect(trend.originator_id, trend, update_state_batch, self.timestamp)
+        author_effect_update = self._calculate_author_post_effect(trend.originator_id, trend, update_states, self.timestamp)
         if author_effect_update:
             # Применяем изменения к автору в памяти
             author = next((a for a in engine.agents if a.id == trend.originator_id), None)
             if author:
                 author.update_state(author_effect_update["attribute_changes"])
 
-            update_state_batch.append(author_effect_update)
+            update_states.append(author_effect_update)
 
         # Пакетная обработка updatestate (читатели + автор)
-        if update_state_batch:
-            engine._process_update_state_batch(update_state_batch)
+        if update_states:
+            engine._process_update_state_batch(update_states)
             
         # Пакетное планирование новых действий
-        if new_actions_batch:
-            scheduled_count = engine._schedule_actions_batch(new_actions_batch)
+        if response_actions:
+            scheduled_count = engine._schedule_actions_batch(response_actions)
             
             logger.info(json.dumps({
                 "event": "response_actions_scheduled",
@@ -784,13 +834,13 @@ class TrendInfluenceEvent(BaseEvent):
         logger.info(json.dumps({
             "event": "trend_influence_processed",
             "trend_id": str(self.trend_id),
-            "influenced_agents": influenced_agents,
+            "influenced_agents": influenced_agents_count,
             "author_post_effect_applied": bool(author_effect_update),
             "post_effect_delta": author_effect_update.get("attribute_changes", {}).get("social_status") if author_effect_update else 0.0,
-            "update_states_created": len(update_state_batch),
-            "new_actions_scheduled": len(new_actions_batch),
+            "update_states_created": len(update_states),
+            "new_actions_scheduled": len(response_actions),
             "total_interactions": trend.total_interactions,
-            "current_virality": current_virality,
+            "current_virality": trend.calculate_current_virality(),
             "timestamp": self.timestamp
         }, default=str))
 
