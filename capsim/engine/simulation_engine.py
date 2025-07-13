@@ -884,21 +884,21 @@ class SimulationEngine:
                 else:
                     new_value = old_value + delta
                 setattr(agent, attr_name, new_value)
-                # ИСПРАВЛЕНИЕ: Сохраняем ВСЕ изменения атрибутов в историю
-                # Убираем фильтр по значимости - сохраняем каждое изменение
-                history_record = {
-                    "type": "attribute_history",
-                    "person_id": agent_id,
-                    "simulation_id": self.simulation_id,
-                    "attribute_name": attr_name,
-                    "old_value": old_value,
-                    "new_value": new_value,
-                    "delta": delta,
-                    "reason": update_state["reason"],
-                    "source_trend_id": update_state.get("source_trend_id"),
-                    "change_timestamp": update_state["timestamp"]
-                }
-                self.add_to_batch_update(history_record)
+                # ИСПРАВЛЕНИЕ: Сохраняем только значимые изменения атрибутов (delta >= 0.1)
+                if abs(delta) >= 0.1:
+                    history_record = {
+                        "type": "attribute_history",
+                        "person_id": agent_id,
+                        "simulation_id": self.simulation_id,
+                        "attribute_name": attr_name,
+                        "old_value": old_value,
+                        "new_value": new_value,
+                        "delta": delta,
+                        "reason": update_state["reason"],
+                        "source_trend_id": update_state.get("source_trend_id"),
+                        "change_timestamp": update_state["timestamp"]
+                    }
+                    self.add_to_batch_update(history_record)
             # ИСПРАВЛЕНИЕ: НЕ создаем person_update - не обновляем таблицу persons напрямую
             # Все изменения атрибутов сохраняются только в person_attribute_history
         logger.info(json.dumps({
@@ -1000,9 +1000,9 @@ class SimulationEngine:
             if agent.energy_level <= 0 or agent.time_budget <= 0:
                 continue
                 
-            # Проверяем ежедневный лимит действий (снято в v1.8 - есть лимиты по типам)
-            # if not self._can_agent_act_today(agent.id):
-            #     continue
+            # ИСПРАВЛЕНИЕ: Включаем проверку ежедневного лимита действий (43/день)
+            if not self._can_agent_act_today(agent.id):
+                continue
                 
             # ИСПРАВЛЕНИЕ: Убираем cooldown для более активных агентов
             # last_action_time = self._agent_action_cooldowns.get(agent.id, 0)
@@ -1017,9 +1017,27 @@ class SimulationEngine:
             "total_agents": len(self.agents)
         }, default=str))
         
-        # v1.8: Увеличиваем активность до 30% от доступных агентов для более активной симуляции
-        max_actions = max(1, min(len(eligible_agents), int(len(eligible_agents) * 0.3)))
-        selected_agents = random.sample(eligible_agents, min(max_actions, len(eligible_agents)))
+        # ИСПРАВЛЕНИЕ: Следуем ТЗ - максимум 43 действия/агента/день
+        # Рассчитываем доступные действия на основе времени симуляции
+        current_day = int(self.current_time // 1440)
+        day_start = current_day * 1440
+        day_end = min(day_start + 1440, self.end_time if self.end_time else float('inf'))
+        day_duration = day_end - day_start
+        
+        # Максимум действий на день для всех агентов
+        max_daily_actions = len(eligible_agents) * 43
+        
+        # Распределяем действия равномерно по времени дня
+        actions_per_minute = max_daily_actions / day_duration if day_duration > 0 else 0
+        
+        # Ограничиваем действия в текущем цикле (каждые 5 минут)
+        # 43 действия/день = 0.0298 действий/минуту на агента
+        max_actions_this_cycle = min(
+            len(eligible_agents),
+            max(1, int(actions_per_minute * 5))  # 5 минут = один цикл
+        )
+        
+        selected_agents = random.sample(eligible_agents, min(max_actions_this_cycle, len(eligible_agents)))
         
         # Получаем текущий главный тренд для передачи в решения
         current_trend = None
@@ -1070,6 +1088,7 @@ class SimulationEngine:
                     
                     # Добавляем событие в очередь
                     self.add_event(post_event, EventPriority.AGENT_ACTION, event_timestamp)
+                    self._track_agent_daily_action(agent.id)
                     scheduled_count += 1
                     
                     logger.debug(json.dumps({
@@ -1094,6 +1113,7 @@ class SimulationEngine:
                         
                         # Добавляем событие в очередь
                         self.add_event(purchase_event, EventPriority.AGENT_ACTION, event_timestamp)
+                        self._track_agent_daily_action(agent.id)
                         scheduled_count += 1
                         
                         logger.debug(json.dumps({
@@ -1115,6 +1135,7 @@ class SimulationEngine:
                         
                         # Добавляем событие в очередь
                         self.add_event(selfdev_event, EventPriority.AGENT_ACTION, event_timestamp)
+                        self._track_agent_daily_action(agent.id)
                         scheduled_count += 1
                         
                         logger.debug(json.dumps({
@@ -1145,8 +1166,9 @@ class SimulationEngine:
                 "current_trend": str(current_trend.trend_id) if current_trend else None
             }, default=str))
         
-        # Дополнительный лёгкий планировщик Wellness-действий (Purchase/SelfDev)
-        scheduled_count += self._schedule_random_wellness()
+        # ИСПРАВЛЕНИЕ: Отключаем дополнительный wellness планировщик
+        # Все действия теперь планируются только через основной планировщик
+        # scheduled_count += self._schedule_random_wellness()
         
         return scheduled_count
 
@@ -1251,10 +1273,11 @@ class SimulationEngine:
             
         elif update_type == "trend_interaction":
             # Агрегируем взаимодействия с трендами
+            # Каждая запись = +1 к total_interactions в БД
             trend_id = str(update["trend_id"])
             existing = next((t for t in self._aggregated_trends if t["trend_id"] == trend_id), None)
             if existing:
-                existing["interaction_count"] = existing.get("interaction_count", 1) + 1
+                existing["interaction_count"] = existing.get("interaction_count", 0) + 1
             else:
                 self._aggregated_trends.append({
                     "trend_id": update["trend_id"],
@@ -1371,8 +1394,8 @@ class SimulationEngine:
 
             # 5. Обновление счетчиков взаимодействий с трендами
             if self._aggregated_trends:
-                trend_ids_to_increment = [t["trend_id"] for t in self._aggregated_trends]
-                await self.db_repo.bulk_increment_trend_interactions(trend_ids_to_increment)
+                trend_counts = [(t["trend_id"], t["interaction_count"]) for t in self._aggregated_trends]
+                await self.db_repo.bulk_increment_trend_interactions(trend_counts)
                 
             commit_time = (time.time() - start_time) * 1000
             

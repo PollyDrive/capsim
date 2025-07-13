@@ -475,17 +475,18 @@ class DatabaseRepository:
                     logger.error(f"Bulk create trends failed: {e}")
                     # Не пробрасываем ошибку, чтобы не прерывать симуляцию из-за дублей
                 
-    async def bulk_increment_trend_interactions(self, trend_ids: List[UUID]) -> None:
-        """Bulk-инкремент взаимодействий для трендов."""
-        if not trend_ids:
+    async def bulk_increment_trend_interactions(self, trend_counts: List[Tuple[UUID, int]]) -> None:
+        """Bulk-инкремент взаимодействий для трендов с учетом количества для каждого тренда."""
+        if not trend_counts:
             return
         async with self.SessionLocal() as session:
             try:
-                await session.execute(
-                    update(Trend)
-                    .where(Trend.trend_id.in_(trend_ids))
-                    .values(interaction_count=Trend.interaction_count + 1)
-                )
+                for trend_id, count in trend_counts:
+                    # ИСПРАВЛЕНИЕ: Используем правильный SQL синтаксис для инкремента с указанием схемы
+                    await session.execute(
+                        text("UPDATE capsim.trends SET total_interactions = total_interactions + :count WHERE trend_id = :trend_id")
+                        .bindparams(count=count, trend_id=trend_id)
+                    )
                 await session.commit()
             except SQLAlchemyError as e:
                 await session.rollback()

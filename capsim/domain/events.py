@@ -769,8 +769,8 @@ class TrendInfluenceEvent(BaseEvent):
                 continue # Автор не влияет сам на себя
 
             # Проверяем, может ли агент вообще увидеть этот тренд
-            # ИСПРАВЛЕНИЕ: Улучшаем логику проверки возможности влияния
-            if agent.trend_receptivity > 0.5 and agent.get_affinity_for_topic(trend.topic) > 3.0:
+            # ИСПРАВЛЕНИЕ: Порог affinity теперь >= 2.5
+            if agent.trend_receptivity > 0.5 and agent.get_affinity_for_topic(trend.topic) >= 2.5:
                 # Определяем соответствие интересов
                 from capsim.common.topic_mapping import topic_to_interest_category
                 try:
@@ -804,10 +804,10 @@ class TrendInfluenceEvent(BaseEvent):
                 influenced_agents_count += 1
                 
                 # ИСПРАВЛЕНИЕ: Добавляем обновление тренда в batch
+                # НЕ передаем total_interactions - это будет обновлено в БД через increment
                 engine.add_to_batch_update({
                     "type": "trend_interaction",
                     "trend_id": trend.trend_id,
-                    "total_interactions": trend.total_interactions,
                     "timestamp": self.timestamp
                 })
                 
