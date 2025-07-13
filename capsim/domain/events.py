@@ -89,8 +89,8 @@ class PublishPostAction(BaseEvent):
             }))
             return
             
-        # Проверить возможность действия
-        if not agent.can_perform_action("PublishPostAction", current_time=self.timestamp):
+        # Проверить возможность действия согласно ТЗ v1.8
+        if not agent.can_post(self.timestamp):
             logger.info(json.dumps({
                 "event": "action_rejected",
                 "agent_id": str(self.agent_id),
@@ -105,6 +105,7 @@ class PublishPostAction(BaseEvent):
             
         # Создать новый тренд
         from ..domain.trend import Trend, CoverageLevel
+        import random
         
         # ИСПРАВЛЕНИЕ: Более реалистичная базовая виральность
         # Базовая виральность зависит от социального статуса агента и его экспертизы в теме
@@ -147,13 +148,17 @@ class PublishPostAction(BaseEvent):
                 parent_trend = max(active_trends_same_topic, key=lambda t: t.total_interactions)
                 parent_trend_id = parent_trend.trend_id
         
+        # v1.9: Случайное присвоение sentiment (50/50) согласно ТЗ v1.9
+        sentiment = random.choice(["Positive", "Negative"])
+        
         new_trend = Trend.create_from_action(
             topic=self.topic,
             originator_id=self.agent_id,
             simulation_id=agent.simulation_id,
             base_virality=base_virality,
             coverage_level=coverage,
-            parent_id=parent_trend_id  # ИСПРАВЛЕНИЕ: Используем parent_trend_id
+            parent_id=parent_trend_id,  # ИСПРАВЛЕНИЕ: Используем parent_trend_id
+            sentiment=sentiment  # v1.9: Добавляем случайный sentiment
         )
         
         # Добавить тренд в активные тренды
@@ -172,29 +177,24 @@ class PublishPostAction(BaseEvent):
             "timestamp": self.timestamp
         })
         
-        # v1.9 immediate costs from action config (energy/time) + small social bonus
-        from capsim.common.settings import action_config as _ac
-        post_cfg = _ac.effects["POST"]
-        agent.update_state({
-            "energy_level": post_cfg["energy_level"],
-            "time_budget": post_cfg["time_budget"],
-            "social_status": post_cfg.get("social_status", 0.0)
-        })
+        # v1.9: Убираем мгновенные эффекты для автора согласно ТЗ v1.9
+        # Эффекты будут применены через PostEffect систему в TrendInfluenceEvent
         
-        # v1.8: Обновить атрибуты отслеживания действий
+        # v1.9: Обновляем только cooldown и tracking атрибуты
         agent.last_post_ts = self.timestamp
         
-        # Добавить в batch обновления (включая новые атрибуты v1.8)
+        # Добавить в batch обновления (только tracking атрибуты)
         engine.add_to_batch_update({
             "type": "person_state",
             "id": self.agent_id,
-            "energy_level": agent.energy_level,
-            "time_budget": agent.time_budget,
-            "social_status": agent.social_status,
-            "last_post_ts": agent.last_post_ts,  # v1.8: Время последнего поста
+            "last_post_ts": agent.last_post_ts,  # v1.9: Время последнего поста
             "reason": "PublishPostAction",
             "timestamp": self.timestamp
         })
+        
+        # Записываем метрики
+        from ..common.metrics import record_action
+        record_action("Post", "", agent.profession)
         
         # Запланировать распространение влияния тренда только если тренд успешно создан
         if new_trend and new_trend.trend_id:
@@ -214,10 +214,7 @@ class PublishPostAction(BaseEvent):
             "timestamp": self.timestamp
         }, default=str))
 
-        # Гарантируем, что созданный тренд сохранён до обработки последующих событий
-        # (например, TrendInfluenceEvent), чтобы избежать FK violation
-        if 'pytest' not in sys.modules:
-            engine._force_commit_after_this_event = True
+        # Тренд будет сохранен в batch commit
 
 
 class EnergyRecoveryEvent(BaseEvent):
@@ -423,30 +420,32 @@ class PurchaseAction(BaseEvent):
         self.purchase_level = purchase_level  # L1, L2, L3
     
     def process(self, engine: "SimulationEngine") -> None:
-        """Execute purchase action."""
+        """Execute purchase action согласно ТЗ v1.9."""
         from ..common.settings import action_config
+        import random
         
         agent = next((a for a in engine.agents if a.id == self.agent_id), None)
         if not agent:
             return
             
-        import random
-        cfg = action_config.effects["PURCHASE"][self.purchase_level]
-
-        # Random cost within configured range
-        cost_range = cfg["cost_range"]
-        spend = random.uniform(cost_range[0], cost_range[1])
-
-        # Build dynamic effects dict
-        effects = {
-            "financial_capability": -spend,
-            "energy_level": cfg.get("energy_level", 0.0),
-            "time_budget": cfg.get("time_budget", 0.0),
+        # Получаем эффекты для данного уровня покупки согласно ТЗ v1.9
+        effects = action_config.effects["PURCHASE"][self.purchase_level]
+        
+        # Случайная стоимость в заданном диапазоне согласно ТЗ v1.9
+        cost_range = effects["cost_range"]
+        actual_cost = random.uniform(cost_range[0], cost_range[1])
+        
+        # Создаем эффекты с реальной стоимостью
+        purchase_effects = {
+            "financial_capability": -actual_cost,
+            "energy_level": effects.get("energy_level", 0.0),
+            "time_budget": effects.get("time_budget", 0.0),
         }
-        if "social_status" in cfg:
-            effects["social_status"] = cfg["social_status"]
-
-        agent.apply_effects(effects)
+        if "social_status" in effects:
+            purchase_effects["social_status"] = effects["social_status"]
+        
+        # Применяем эффекты к агенту
+        agent.apply_effects(purchase_effects)
         
         # Update v1.8 tracking attributes
         agent.purchases_today += 1
@@ -466,10 +465,16 @@ class PurchaseAction(BaseEvent):
             "timestamp": self.timestamp
         })
         
+        # Записываем метрики
+        from ..common.metrics import record_action
+        record_action("Purchase", self.purchase_level, agent.profession)
+        
         logger.info(json.dumps({
             "event": "purchase_completed",
             "agent_id": str(self.agent_id),
-            "purchase_level": self.purchase_level,
+            "level": self.purchase_level,
+            "actual_cost": actual_cost,
+            "financial_capability_after": agent.financial_capability,
             "purchases_today": agent.purchases_today,
             "timestamp": self.timestamp
         }, default=str))
@@ -483,15 +488,17 @@ class SelfDevAction(BaseEvent):
         self.agent_id = agent_id
     
     def process(self, engine: "SimulationEngine") -> None:
-        """Execute self-development action."""
+        """Execute self-development action согласно ТЗ v1.8."""
         from ..common.settings import action_config
         
         agent = next((a for a in engine.agents if a.id == self.agent_id), None)
         if not agent:
             return
             
-        # Apply self-development effects
+        # Получаем эффекты саморазвития согласно ТЗ v1.8
         effects = action_config.effects["SELF_DEV"]
+        
+        # Применяем эффекты к агенту
         agent.apply_effects(effects)
         
         # Update v1.8 tracking attributes
@@ -503,15 +510,20 @@ class SelfDevAction(BaseEvent):
             "id": self.agent_id,
             "energy_level": agent.energy_level,
             "time_budget": agent.time_budget,
-            "trend_receptivity": agent.trend_receptivity,
             "last_selfdev_ts": agent.last_selfdev_ts,
             "reason": "SelfDevAction",
             "timestamp": self.timestamp
         })
         
+        # Записываем метрики
+        from ..common.metrics import record_action
+        record_action("SelfDev", "", agent.profession)
+        
         logger.info(json.dumps({
             "event": "selfdev_completed",
             "agent_id": str(self.agent_id),
+            "energy_level_after": agent.energy_level,
+            "time_budget_after": agent.time_budget,
             "timestamp": self.timestamp
         }, default=str))
 
@@ -844,5 +856,4 @@ class TrendInfluenceEvent(BaseEvent):
             "timestamp": self.timestamp
         }, default=str))
 
-        if 'pytest' not in sys.modules:
-            engine._force_commit_after_this_event = True 
+        # События будут сохранены в batch commit 

@@ -492,8 +492,35 @@ class DatabaseRepository:
         """Bulk-создание новых событий."""
         if not events_data:
             return
-        async with self.SessionLocal.begin() as session:
-            await session.execute(insert(Event), events_data)
+        
+        from ..db.models import Event as DBEvent
+        
+        async with self.SessionLocal() as session:
+            # Создаем объекты Event из данных
+            db_events = []
+            for event_data in events_data:
+                # Очищаем данные от служебных полей
+                cleaned_data = event_data.copy()
+                cleaned_data.pop("type", None)
+                
+                # Конвертируем processed_at обратно в datetime
+                if "processed_at" in cleaned_data and isinstance(cleaned_data["processed_at"], str):
+                    cleaned_data["processed_at"] = datetime.fromisoformat(cleaned_data["processed_at"].replace("Z", "+00:00"))
+                
+                # Конвертируем UUID строки обратно в UUID объекты
+                if "simulation_id" in cleaned_data and isinstance(cleaned_data["simulation_id"], str):
+                    cleaned_data["simulation_id"] = UUID(cleaned_data["simulation_id"])
+                if "agent_id" in cleaned_data and cleaned_data["agent_id"] and isinstance(cleaned_data["agent_id"], str):
+                    cleaned_data["agent_id"] = UUID(cleaned_data["agent_id"])
+                if "trend_id" in cleaned_data and cleaned_data["trend_id"] and isinstance(cleaned_data["trend_id"], str):
+                    cleaned_data["trend_id"] = UUID(cleaned_data["trend_id"])
+                
+                db_event = DBEvent(**cleaned_data)
+                db_events.append(db_event)
+            
+            # Добавляем все события в сессию
+            session.add_all(db_events)
+            await session.commit()
             
     # Affinity and interests operations
     async def load_affinity_map(self) -> Dict[str, Dict[str, float]]:
@@ -569,15 +596,26 @@ class DatabaseRepository:
         """Bulk update Person records."""
         if not updates:
             return
-        async with self.SessionLocal().begin() as session: # Используем транзакцию
-            await session.execute(update(Person), updates)
+        async with self.SessionLocal() as session:
+            for update_data in updates:
+                stmt = update(Person).where(Person.id == update_data['id']).values(**{k: v for k, v in update_data.items() if k != 'id'})
+                await session.execute(stmt)
+            await session.commit()
             
     async def bulk_update_simulation_participants(self, updates: List[Dict[str, Any]]) -> None:
         """Bulk update SimulationParticipant records."""
         if not updates:
             return
-        async with self.SessionLocal().begin() as session: # Используем транзакцию
-            await session.execute(update(SimulationParticipant), updates)
+        async with self.SessionLocal() as session:
+            for update_data in updates:
+                simulation_id = update_data['simulation_id']
+                person_id = update_data['person_id']
+                stmt = update(SimulationParticipant).where(
+                    SimulationParticipant.simulation_id == simulation_id,
+                    SimulationParticipant.person_id == person_id
+                ).values(**{k: v for k, v in update_data.items() if k not in ['simulation_id', 'person_id']})
+                await session.execute(stmt)
+            await session.commit()
             
     async def batch_commit_states(self, updates: List[Dict[str, Any]]) -> None:
         """
