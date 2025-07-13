@@ -50,6 +50,7 @@ async def run_simulation_cli(
     try:
         from ..engine.simulation_engine import SimulationEngine
         from ..db.repositories import DatabaseRepository as _RealRepository
+        from ..common.settings import settings
     except ImportError as e:
         print(f"❌ Ошибка импорта: {e}")
         return

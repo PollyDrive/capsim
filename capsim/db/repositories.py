@@ -407,8 +407,45 @@ class DatabaseRepository:
             await session.execute(stmt)
             await session.commit()
             
+    async def bulk_create_trends(self, trends_data: List[Dict]) -> None:
+        """Bulk-создание новых трендов с обработкой дубликатов."""
+        if not trends_data:
+            return
+        
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        async with self.SessionLocal() as session:
+            async with session.begin():
+                try:
+                    # Используем ON CONFLICT DO NOTHING для игнорирования дубликатов
+                    stmt = pg_insert(Trend).values(trends_data)
+                    stmt = stmt.on_conflict_do_nothing(index_elements=['trend_id'])
+                    await session.execute(stmt)
+                except SQLAlchemyError as e:
+                    logger.error(f"Bulk create trends failed: {e}")
+                    # Не пробрасываем ошибку, чтобы не прерывать симуляцию из-за дублей
+                
+    async def bulk_increment_trend_interactions(self, trend_ids: List[UUID]) -> None:
+        """Bulk-инкремент взаимодействий для трендов."""
+        if not trend_ids:
+            return
+        async with self.SessionLocal() as session:
+            try:
+                await session.execute(
+                    update(Trend)
+                    .where(Trend.trend_id.in_(trend_ids))
+                    .values(interaction_count=Trend.interaction_count + 1)
+                )
+                await session.commit()
+            except SQLAlchemyError as e:
+                await session.rollback()
+                logger.error(f"Bulk increment trend interactions failed: {e}")
+                raise
+            
     async def get_simulation_participants_count(self, simulation_id: UUID) -> int:
-        """Get count of participants in simulation."""
+        """
+        Возвращает количество участников в симуляции.
+        """
         async with self.ReadOnlySession() as session:
             result = await session.execute(
                 select(SimulationParticipant).where(
@@ -425,7 +462,7 @@ class DatabaseRepository:
             await session.commit()
             
     async def get_active_trends(self, simulation_id: UUID) -> List[Trend]:
-        """Get active trends for simulation."""
+        """Get all active trends for a simulation."""
         async with self.ReadOnlySession() as session:
             result = await session.execute(
                 select(Trend).where(Trend.simulation_id == simulation_id)
@@ -433,14 +470,15 @@ class DatabaseRepository:
             return result.scalars().all()
             
     async def increment_trend_interactions(self, trend_id: UUID) -> None:
-        """Increment trend interactions count."""
+        """Increment interaction count for a trend."""
         async with self.SessionLocal() as session:
-            stmt = update(Trend).where(
-                Trend.trend_id == trend_id
-            ).values(
-                total_interactions=Trend.total_interactions + 1
+            await session.execute(
+                update(Trend).where(
+                    Trend.trend_id == trend_id
+                ).values(
+                    interaction_count=Trend.interaction_count + 1
+                )
             )
-            await session.execute(stmt)
             await session.commit()
             
     # Event operations
@@ -450,20 +488,16 @@ class DatabaseRepository:
             session.add(event)
             await session.commit()
             
-    async def bulk_create_events(self, events: List[Event]) -> None:
-        """Bulk create events."""
-        async with self.SessionLocal() as session:
-            session.add_all(events)
-            await session.commit()
-            
-            logger.info(json.dumps({
-                "event": "events_bulk_created",
-                "count": len(events)
-            }))
+    async def bulk_create_events(self, events_data: List[Dict]) -> None:
+        """Bulk-создание новых событий."""
+        if not events_data:
+            return
+        async with self.SessionLocal.begin() as session:
+            await session.execute(insert(Event), events_data)
             
     # Affinity and interests operations
     async def load_affinity_map(self) -> Dict[str, Dict[str, float]]:
-        """Load affinity map from database."""
+        """Load the entire affinity map from the database."""
         async with self.ReadOnlySession() as session:
             result = await session.execute(select(AffinityMap))
             affinity_map = {}
@@ -532,40 +566,22 @@ class DatabaseRepository:
             
     # Batch operations
     async def bulk_update_persons(self, updates: List[Dict[str, Any]]) -> None:
-        """Bulk update person attributes."""
-        async with self.SessionLocal() as session:
-            for update_data in updates:
-                person_id = update_data.pop('id')
-                stmt = update(Person).where(Person.id == person_id).values(**update_data)
-                await session.execute(stmt)
-                
-            await session.commit()
+        """Bulk update Person records."""
+        if not updates:
+            return
+        async with self.SessionLocal().begin() as session: # Используем транзакцию
+            await session.execute(update(Person), updates)
             
     async def bulk_update_simulation_participants(self, updates: List[Dict[str, Any]]) -> None:
-        """Bulk update simulation participant attributes."""
-        async with self.SessionLocal() as session:
-            for update_data in updates:
-                simulation_id = update_data.pop('simulation_id')
-                person_id = update_data.pop('person_id')
-                stmt = update(SimulationParticipant).where(
-                    SimulationParticipant.simulation_id == simulation_id,
-                    SimulationParticipant.person_id == person_id
-                ).values(**update_data)
-                await session.execute(stmt)
-                
-            await session.commit()
+        """Bulk update SimulationParticipant records."""
+        if not updates:
+            return
+        async with self.SessionLocal().begin() as session: # Используем транзакцию
+            await session.execute(update(SimulationParticipant), updates)
             
     async def batch_commit_states(self, updates: List[Dict[str, Any]]) -> None:
         """
-        Batch commit state updates with retry logic.
-        
-        Args:
-            updates: List of update dictionaries with format:
-                {
-                    'table': 'persons' | 'simulation_participants',
-                    'id': UUID,  # person_id for persons, (simulation_id, person_id) for participants
-                    'updates': Dict[str, Any]  # fields to update
-                }
+        DEPRECATED: This method is now handled by the simulation engine's
         """
         if not updates:
             return
