@@ -8,6 +8,7 @@ from datetime import datetime, date
 from dataclasses import dataclass, field
 import random
 import os
+import math
 
 if TYPE_CHECKING:
     from ..engine.simulation_engine import SimulationContext
@@ -47,6 +48,7 @@ class Person:
     
     # v1.8: Action tracking and cooldowns
     purchases_today: int = 0  # Daily purchase counter
+    actions_today: int = 0  # ИСПРАВЛЕНИЕ: Счетчик всех действий в день (лимит 43 согласно ТЗ)
     last_post_ts: Optional[float] = None  # Last post timestamp
     last_selfdev_ts: Optional[float] = None  # Last self-development timestamp
     last_purchase_ts: Dict[str, Optional[float]] = field(default_factory=dict)  # {L1: timestamp, L2: timestamp, L3: timestamp}
@@ -131,12 +133,21 @@ class Person:
                 if attribute in ["energy_level", "financial_capability", 
                                "trend_receptivity", "social_status"]:
                     new_value = max(0.0, min(5.0, current_value + delta))
+                    # ИСПРАВЛЕНИЕ: Защита от NaN
+                    if math.isnan(new_value) or math.isinf(new_value):
+                        new_value = current_value
                 elif attribute == "time_budget":
                     # Унифицировано: float с округлением до 0.5
                     raw_value = max(0.0, min(5.0, current_value + delta))
                     new_value = float(round(raw_value * 2) / 2)  # Округление до 0.5, принудительно float
+                    # ИСПРАВЛЕНИЕ: Защита от NaN
+                    if math.isnan(new_value) or math.isinf(new_value):
+                        new_value = current_value
                 else:
                     new_value = current_value + delta
+                    # ИСПРАВЛЕНИЕ: Защита от NaN
+                    if math.isnan(new_value) or math.isinf(new_value):
+                        new_value = current_value
                     
                 setattr(self, attribute, new_value)
         
@@ -151,6 +162,10 @@ class Person:
         Returns:
             True если действие возможно
         """
+        # ИСПРАВЛЕНИЕ: Проверка лимита действий в день (20 для более реалистичной активности)
+        if self.actions_today >= 20:
+            return False
+            
         # Проверка времени суток согласно ТЗ v1.9 (ночной режим 00:00-08:00)
         if current_time is not None:
             day_time = current_time % 1440  # минуты в дне
@@ -183,16 +198,29 @@ class Person:
             if hasattr(self, attribute):
                 current_value = float(getattr(self, attribute))  # Конвертируем Decimal в float
                 
+                # ИСПРАВЛЕНИЕ: Защита от NaN в входных данных
+                if math.isnan(current_value) or math.isnan(delta):
+                    continue
+                
                 # Применяем ограничения по диапазону
                 if attribute in ["energy_level", "financial_capability", 
                                "trend_receptivity", "social_status"]:
                     new_value = max(0.0, min(5.0, current_value + delta))
+                    # ИСПРАВЛЕНИЕ: Защита от NaN
+                    if math.isnan(new_value) or math.isinf(new_value):
+                        new_value = current_value
                 elif attribute == "time_budget":
                     # Унифицировано: float с округлением до 0.5
                     raw_value = max(0.0, min(5.0, current_value + delta))
                     new_value = float(round(raw_value * 2) / 2)  # Округление до 0.5
+                    # ИСПРАВЛЕНИЕ: Защита от NaN
+                    if math.isnan(new_value) or math.isinf(new_value):
+                        new_value = current_value
                 else:
                     new_value = current_value + delta
+                    # ИСПРАВЛЕНИЕ: Защита от NaN
+                    if math.isnan(new_value) or math.isinf(new_value):
+                        new_value = current_value
                     
                 setattr(self, attribute, new_value)
     
@@ -230,6 +258,12 @@ class Person:
         """Проверяет возможность покупки определенного уровня согласно ТЗ v1.9."""
         from capsim.common.settings import action_config
 
+        # ИСПРАВЛЕНИЕ: Добавляем cooldown для покупок (30 минут между покупками)
+        if level in self.last_purchase_ts and self.last_purchase_ts[level] is not None:
+            cooldown_passed = current_time - self.last_purchase_ts[level] >= 30.0  # 30 минут cooldown
+            if not cooldown_passed:
+                return False
+
         # Проверка дневного лимита согласно ТЗ v1.8
         max_purchases = action_config.limits["MAX_PURCHASES_DAY"]
         if self.purchases_today >= max_purchases:
@@ -238,7 +272,8 @@ class Person:
         # Проверка финансовых порогов согласно ТЗ v1.9
         effects = action_config.effects["PURCHASE"][level]
         cost_range = effects["cost_range"]
-        min_cost = 0.2  # Используем минимальную стоимость как порог
+        # ИСПРАВЛЕНИЕ: Используем минимальную стоимость как порог - агент может попробовать купить, если может позволить минимум
+        min_cost = cost_range[0]
         
         return self.financial_capability >= min_cost
         
@@ -444,10 +479,15 @@ class Person:
         # POST logic - согласно ТЗ v1.8
         if self.can_post(current_time):
             if trend and hasattr(trend, 'calculate_current_virality'):
-                post_score = (
-                    trend.calculate_current_virality() * self.trend_receptivity / 25  # Согласно ТЗ
-                    * (1 + self.social_status / 10)  # Согласно ТЗ
-                )
+                virality = trend.calculate_current_virality()
+                # ИСПРАВЛЕНИЕ: Защита от NaN и деления на ноль
+                if math.isnan(virality) or math.isinf(virality) or self.trend_receptivity == 0:
+                    post_score = 0.3
+                else:
+                    post_score = (
+                        virality * self.trend_receptivity / 25  # Согласно ТЗ
+                        * (1 + self.social_status / 10)  # Согласно ТЗ
+                    )
             else:
                 post_score = 0.3  # Базовый score для постов без тренда
             actions.append(("Post", post_score))
@@ -455,7 +495,8 @@ class Person:
         # PURCHASE logic (L1/L2/L3) - согласно ТЗ v1.8
         for level in ["L1", "L2", "L3"]:
             if self.can_purchase(current_time, level):
-                score = 0.3 * getattr(action_config, 'shop_weights', {}).get(self.profession, 1.0)  # Согласно ТЗ
+                # ИСПРАВЛЕНИЕ: Снижаем базовый score покупок с 0.3 до 0.1
+                score = 0.1 * getattr(action_config, 'shop_weights', {}).get(self.profession, 1.0)  # Согласно ТЗ
                 if trend and hasattr(trend, 'topic') and trend.topic == "Economic":
                     score *= 1.2  # Согласно ТЗ
                 actions.append((f"Purchase_{level}", score))

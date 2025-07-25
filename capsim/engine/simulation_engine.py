@@ -553,8 +553,8 @@ class SimulationEngine:
                     await self._batch_commit_states()
                 
                 # Запланировать новые действия агентов после каждого события
-                # ИСПРАВЛЕНИЕ: Планируем новые действия каждые 5 минут симуляции
-                if int(self.current_time) % 5 == 0:
+                # ИСПРАВЛЕНИЕ: Планируем новые действия каждые 10 минут симуляции для достижения активности
+                if int(self.current_time) % 10 == 0 and int(self.current_time) > 0:
                     scheduled = await self._schedule_agent_actions()
                     agent_actions_scheduled += scheduled
                 
@@ -1030,11 +1030,13 @@ class SimulationEngine:
         # Распределяем действия равномерно по времени дня
         actions_per_minute = max_daily_actions / day_duration if day_duration > 0 else 0
         
-        # Ограничиваем действия в текущем цикле (каждые 5 минут)
-        # 43 действия/день = 0.0298 действий/минуту на агента
+        # ИСПРАВЛЕНИЕ: Ограничиваем действия в текущем цикле (каждые 10 минут)
+        # 20 действий/день = 0.0139 действий/минуту на агента
+        # Увеличиваем до 50% агентов за цикл для достижения нужной активности
         max_actions_this_cycle = min(
             len(eligible_agents),
-            max(1, int(actions_per_minute * 5))  # 5 минут = один цикл
+            max(1, int(len(eligible_agents) * 0.5)),  # Максимум 50% агентов за цикл
+            max(1, int(actions_per_minute * 10))  # 10 минут = один цикл
         )
         
         selected_agents = random.sample(eligible_agents, min(max_actions_this_cycle, len(eligible_agents)))

@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 from dataclasses import dataclass
 import json
 import logging
+import math
 from enum import IntEnum
 import sys
 import random
@@ -182,6 +183,7 @@ class PublishPostAction(BaseEvent):
         
         # v1.9: Обновляем только cooldown и tracking атрибуты
         agent.last_post_ts = self.timestamp
+        agent.actions_today += 1  # ИСПРАВЛЕНИЕ: Увеличиваем счетчик всех действий
         
         # Добавить в batch обновления (только tracking атрибуты)
         engine.add_to_batch_update({
@@ -321,9 +323,10 @@ class MorningRecoveryEvent(BaseEvent):
                 if delta_e:
                     changes["energy_level"] = delta_e
 
-            if agent.financial_capability < 5.0:
+            # ИСПРАВЛЕНИЕ: Восстанавливаем финансы всегда, если они меньше максимума
+            if agent.financial_capability < 5.0 and not math.isnan(agent.financial_capability):
                 delta_f = min(5.0, agent.financial_capability + financial_bonus) - agent.financial_capability
-                if delta_f:
+                if delta_f > 0 and not math.isnan(delta_f):
                     changes["financial_capability"] = delta_f
 
             if not changes:
@@ -388,6 +391,10 @@ class DailyResetEvent(BaseEvent):
             if agent.purchases_today > 0:
                 agent.purchases_today = 0
                 reset_done = True
+            # ИСПРАВЛЕНИЕ: Сбрасываем счетчик всех действий в день
+            if agent.actions_today > 0:
+                agent.actions_today = 0
+                reset_done = True
             # v1.8: обнуляем per-level timestamps
             if getattr(agent, 'last_purchase_ts', None):
                 agent.last_purchase_ts = {"L1": None, "L2": None, "L3": None}
@@ -441,7 +448,13 @@ class PurchaseAction(BaseEvent):
         
         # Случайная стоимость в заданном диапазоне согласно ТЗ v1.9
         cost_range = effects["cost_range"]
-        actual_cost = random.uniform(cost_range[0], cost_range[1])
+        # ИСПРАВЛЕНИЕ: Защита от некорректных значений
+        min_cost = float(cost_range[0])
+        max_cost = float(cost_range[1])
+        if math.isnan(min_cost) or math.isnan(max_cost) or min_cost < 0 or max_cost < min_cost:
+            actual_cost = 0.1  # Fallback значение
+        else:
+            actual_cost = random.uniform(min_cost, max_cost)
         
         # Создаем эффекты с реальной стоимостью
         purchase_effects = {
@@ -457,6 +470,7 @@ class PurchaseAction(BaseEvent):
         
         # Update v1.8 tracking attributes
         agent.purchases_today += 1
+        agent.actions_today += 1  # ИСПРАВЛЕНИЕ: Увеличиваем счетчик всех действий
         agent.last_purchase_ts[self.purchase_level] = self.timestamp
         
         # ИСПРАВЛЕНИЕ: Создаем записи в person_attribute_history для каждого измененного атрибута
@@ -524,6 +538,7 @@ class SelfDevAction(BaseEvent):
         
         # Update v1.8 tracking attributes
         agent.last_selfdev_ts = self.timestamp
+        agent.actions_today += 1  # ИСПРАВЛЕНИЕ: Увеличиваем счетчик всех действий
         
         # ИСПРАВЛЕНИЕ: Создаем записи в person_attribute_history для каждого измененного атрибута
         # Сохраняем изменения атрибутов в историю
@@ -677,8 +692,10 @@ class TrendInfluenceEvent(BaseEvent):
     @staticmethod
     def _calculate_reader_effects(sentiment: str, aligned: bool) -> dict[str, float]:
         """Return attribute deltas based on sentiment matrix from tech_v1.9."""
-        # Восприимчивость (trend_receptivity)
+        # Восприимчивость (trend_receptivity) - ИСПРАВЛЕНИЕ: Защита от NaN
         receptivity_delta = 0.01 if (aligned or sentiment == "Negative") else 0.0
+        if math.isnan(receptivity_delta) or math.isinf(receptivity_delta):
+            receptivity_delta = 0.0
 
         # Энергия
         if sentiment == "Positive":
