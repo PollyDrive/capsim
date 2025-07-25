@@ -449,7 +449,7 @@ class SimulationEngine:
             # ИСПРАВЛЕНИЕ: Планируем только события в будущем относительно текущего времени
             # И только если день еще не начался (day_start_time > self.current_time)
             if day_start_time > self.current_time:
-                for minute in range(0, min(1440, int(self.end_time - day_start_time)), 3):
+                for minute in range(0, min(1440, int(self.end_time - day_start_time)), 20):
                     energy_event_time = day_start_time + minute
                     # Планируем только события в будущем и в пределах времени симуляции
                     if energy_event_time < self.end_time:

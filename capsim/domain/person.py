@@ -155,7 +155,8 @@ class Person:
         if current_time is not None:
             day_time = current_time % 1440  # минуты в дне
             if 0 <= day_time < 480:  # 00:00 - 08:00 (8 часов = 480 минут)
-                return False
+                import random
+                return random.random() < 0.2 # 20% активности ночью
         
         # Базовые проверки для любого действия
         if action_type == "any":
@@ -207,7 +208,7 @@ class Person:
         
         # Проверки ресурсов согласно ТЗ v1.9
         return (
-            self.energy_level >= 0.5 and
+            self.energy_level >= 0.3 and
             self.time_budget >= 0.5 and
             self.trend_receptivity > 0
         )
@@ -237,7 +238,7 @@ class Person:
         # Проверка финансовых порогов согласно ТЗ v1.9
         effects = action_config.effects["PURCHASE"][level]
         cost_range = effects["cost_range"]
-        min_cost = cost_range[0]  # Используем минимальную стоимость как порог
+        min_cost = 0.2  # Используем минимальную стоимость как порог
         
         return self.financial_capability >= min_cost
         
@@ -473,6 +474,9 @@ class Person:
         
         # Если все веса нулевые, возвращаем None
         if sum(weights) == 0:
+            if random.random() < 0.1:  # 10% шанс случайного действия
+                actions = ['Post', 'Purchase_L1', 'SelfDev']
+                return random.choice(actions)
             return None
             
         selected = random.choices(names, weights=weights)[0]
