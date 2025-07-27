@@ -290,7 +290,8 @@ class TestV18Integration:
         
         # Test Post action capability check
         if ACTION_FACTORY:
-            post_action = ACTION_FACTORY["Post"]
+            post_action_class = ACTION_FACTORY["Post"]
+            post_action = post_action_class()
             assert post_action.can_execute(person, mock_engine.current_time)
             
             # Test that action has required methods

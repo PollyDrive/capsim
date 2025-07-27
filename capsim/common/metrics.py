@@ -79,6 +79,19 @@ SIMULATION_START_TIME = Gauge(
     ['simulation_id']
 )
 
+# Agent activity limit metrics
+AGENT_DAILY_ACTIONS = Gauge(
+    'capsim_agent_daily_actions',
+    'Number of daily actions per agent',
+    ['simulation_id', 'agent_id']
+)
+
+AGENT_HOURLY_ACTIONS = Gauge(
+    'capsim_agent_hourly_actions', 
+    'Number of hourly actions per agent',
+    ['simulation_id', 'agent_id']
+)
+
 # Queue metrics
 QUEUE_LENGTH = Gauge(
     'capsim_queue_length',

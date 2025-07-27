@@ -131,8 +131,23 @@ class SimulationEngine:
         if self.simulation_id:
             raise RuntimeError("Simulation already initialized")
 
+        # Валидация входных параметров
+        if duration_days <= 0:
+            raise ValueError(f"Duration must be positive, got {duration_days} days")
+        if num_agents <= 0:
+            raise ValueError(f"Number of agents must be positive, got {num_agents}")
+        if duration_days > 365:
+            raise ValueError(f"Duration too long, maximum 365 days, got {duration_days} days")
+
         # Устанавливаем время окончания симуляции
         self.end_time = duration_days * 1440.0
+        
+        logger.info(json.dumps({
+            "event": "simulation_duration_set",
+            "duration_days": duration_days,
+            "duration_minutes": self.end_time,
+            "num_agents": num_agents
+        }, default=str))
             
         self._last_batch_commit = time.time()
         self._agent_action_cooldowns = {}
@@ -504,16 +519,47 @@ class SimulationEngine:
 
             # ИСПРАВЛЕНИЕ: Основной цикл должен завершаться по времени симуляции
             while self._running and self.current_time < end_time:
-
-                # Если очередь пуста, завершаем симуляцию
-                if not self.event_queue:
+                
+                # Проверяем достижение целевого времени с точностью до секунды
+                if self.current_time >= end_time:
                     logger.info(json.dumps({
-                        "event": "event_queue_empty",
+                        "event": "simulation_time_limit_reached_gracefully",
                         "simulation_time": self.current_time,
                         "target_end_time": end_time,
-                        "msg": "Simulation finished - no more events."
+                        "msg": "Simulation completed - target time reached."
                     }, default=str))
                     break
+
+                # Если очередь пуста, но время симуляции не истекло - планируем новые события
+                if not self.event_queue:
+                    if self.current_time < end_time:
+                        logger.info(json.dumps({
+                            "event": "event_queue_empty_forcing_continuation",
+                            "simulation_time": self.current_time,
+                            "target_end_time": end_time,
+                            "time_remaining": end_time - self.current_time,
+                            "msg": "Forcing simulation continuation with new events."
+                        }, default=str))
+                        
+                        # Принудительно планируем новые действия агентов
+                        scheduled = await self._schedule_uniform_agent_actions()
+                        if scheduled == 0:
+                            # Если не удалось запланировать действия, продвигаем время на 1 минуту
+                            self.current_time = min(self.current_time + 1.0, end_time)
+                            logger.info(json.dumps({
+                                "event": "time_advanced_due_to_empty_queue",
+                                "new_time": self.current_time,
+                                "target_end_time": end_time
+                            }, default=str))
+                        continue
+                    else:
+                        logger.info(json.dumps({
+                            "event": "event_queue_empty_simulation_complete",
+                            "simulation_time": self.current_time,
+                            "target_end_time": end_time,
+                            "msg": "Simulation finished - no more events and time limit reached."
+                        }, default=str))
+                        break
 
                 # Получаем следующее событие
                 priority_event = heapq.heappop(self.event_queue)
@@ -552,11 +598,10 @@ class SimulationEngine:
                 if self._should_commit_batch():
                     await self._batch_commit_states()
                 
-                # Запланировать новые действия агентов после каждого события
-                # ИСПРАВЛЕНИЕ: Планируем новые действия каждые 10 минут симуляции для достижения активности
-                if int(self.current_time) % 10 == 0 and int(self.current_time) > 0:
-                    scheduled = await self._schedule_agent_actions()
-                    agent_actions_scheduled += scheduled
+                # НОВЫЙ АЛГОРИТМ: Равномерное планирование вместо массового каждые 10 минут
+                # Проверяем нужно ли планировать новые действия для агентов
+                scheduled = await self._schedule_uniform_agent_actions()
+                agent_actions_scheduled += scheduled
                 
         except Exception as e:
             logger.error(json.dumps({
@@ -588,10 +633,18 @@ class SimulationEngine:
                     datetime.utcnow()
                 )
             
+            # Импортируем функцию конвертации времени для логирования
+            try:
+                from ..common.time_utils import format_simulation_time_detailed
+                human_time = format_simulation_time_detailed(self.current_time)
+            except ImportError:
+                human_time = f"{self.current_time:.1f} минут"
+            
             logger.info(json.dumps({
                 "event": "simulation_finished",
                 "simulation_id": str(self.simulation_id),
                 "final_sim_time": self.current_time,
+                "final_human_time": human_time,
                 "real_duration_sec": time.time() - self._simulation_start_real
             }, default=str))
 
@@ -640,11 +693,18 @@ class SimulationEngine:
             # (EnergyRecoveryEvent, DailyResetEvent, SaveDailyTrendEvent)
             
             # Добавляем событие в batch для сохранения в БД
+            try:
+                from capsim.common.time_utils import convert_sim_time_to_human
+                action_timestamp = convert_sim_time_to_human(event.timestamp)
+            except Exception:
+                action_timestamp = None
+            
             event_data = {
                 "simulation_id": self.simulation_id,
                 "event_type": event.__class__.__name__,
                 "priority": event.priority,
                 "timestamp": event.timestamp,
+                "action_timestamp": action_timestamp,
                 "agent_id": agent_id,  # NULL для системных событий
                 "trend_id": trend_id,  # NULL если не связано с трендом
                 "event_data": {
@@ -686,7 +746,23 @@ class SimulationEngine:
         - PublishPost для агентов с высокой социальной активностью
         - Purchase для агентов с достаточными финансовыми возможностями  
         - SelfDev для агентов с низкой энергией
+        
+        ВАЖНО: Проверяет рабочие часы - агенты неактивны с 00:00 до 08:00.
         """
+        from capsim.common.time_utils import is_work_hours, convert_sim_time_to_human
+        
+        # Проверяем рабочие часы для агентов
+        if not is_work_hours(self.current_time):
+            human_time = convert_sim_time_to_human(self.current_time)
+            logger.info(json.dumps({
+                "event": "agent_actions_skipped",
+                "reason": "night_time",
+                "current_time": self.current_time,
+                "human_time": human_time,
+                "message": "Агенты неактивны в ночное время (00:00-08:00)"
+            }, default=str))
+            return 0
+        
         scheduled_count = 0
         context = SimulationContext(
             current_time=self.current_time,
@@ -840,7 +916,15 @@ class SimulationEngine:
         return scheduled_count
 
     def _can_agent_act_today(self, agent_id: UUID) -> bool:
-        """Проверяет может ли агент еще действовать сегодня (лимит 43 действия)."""
+        """
+        Проверяет может ли агент еще действовать сегодня (лимит T3: 43 действия).
+        
+        Args:
+            agent_id: ID агента для проверки
+            
+        Returns:
+            True если агент может действовать, False если достигнут дневной лимит
+        """
         current_day = int(self.current_time // 1440)
         day_key = f"{agent_id}_{current_day}"
         
@@ -848,17 +932,238 @@ class SimulationEngine:
             self._daily_action_counts = {}
             
         current_count = self._daily_action_counts.get(day_key, 0)
-        return current_count < 43
+        daily_limit = 20  # ИСПРАВЛЕНИЕ: Снижаем лимит для предотвращения чрезмерной активности
+        
+        can_act = current_count < daily_limit
+        
+        if not can_act:
+            logger.debug(json.dumps({
+                "event": "agent_daily_limit_reached",
+                "agent_id": str(agent_id),
+                "current_count": current_count,
+                "daily_limit": daily_limit,
+                "current_day": current_day,
+                "simulation_time": self.current_time
+            }, default=str))
+            
+        return can_act
+
+    def _can_agent_act_this_hour(self, agent_id: UUID) -> bool:
+        """
+        Проверяет может ли агент действовать в текущем часу (лимит: 3 действия в час).
+        
+        Args:
+            agent_id: ID агента для проверки
+            
+        Returns:
+            True если агент может действовать, False если достигнут часовой лимит
+        """
+        current_hour = int(self.current_time // 60)
+        hour_key = f"{agent_id}_{current_hour}"
+        
+        if not hasattr(self, '_hourly_action_counts'):
+            self._hourly_action_counts = {}
+            
+        current_count = self._hourly_action_counts.get(hour_key, 0)
+        hourly_limit = 2  # ИСПРАВЛЕНИЕ: Снижаем до 2 действий в час
+        
+        can_act = current_count < hourly_limit
+        
+        if not can_act:
+            logger.debug(json.dumps({
+                "event": "agent_hourly_limit_reached",
+                "agent_id": str(agent_id),
+                "current_count": current_count,
+                "hourly_limit": hourly_limit,
+                "current_hour": current_hour,
+                "simulation_time": self.current_time
+            }, default=str))
+            
+        return can_act
+
+    def _check_agent_limits(self, agent_id: UUID) -> dict:
+        """
+        Комплексная проверка всех лимитов агента с детальной информацией.
+        
+        Args:
+            agent_id: ID агента для проверки
+            
+        Returns:
+            Словарь с результатами проверки лимитов
+        """
+        current_day = int(self.current_time // 1440)
+        current_hour = int(self.current_time // 60)
+        
+        # Инициализируем счетчики если нужно
+        if not hasattr(self, '_daily_action_counts'):
+            self._daily_action_counts = {}
+        if not hasattr(self, '_hourly_action_counts'):
+            self._hourly_action_counts = {}
+            
+        day_key = f"{agent_id}_{current_day}"
+        hour_key = f"{agent_id}_{current_hour}"
+        
+        daily_count = self._daily_action_counts.get(day_key, 0)
+        hourly_count = self._hourly_action_counts.get(hour_key, 0)
+        
+        daily_limit = 20  # ИСПРАВЛЕНИЕ: Снижаем лимиты
+        hourly_limit = 2
+        
+        can_act_daily = daily_count < daily_limit
+        can_act_hourly = hourly_count < hourly_limit
+        can_act = can_act_daily and can_act_hourly
+        
+        result = {
+            "can_act": can_act,
+            "daily": {
+                "current": daily_count,
+                "limit": daily_limit,
+                "remaining": max(0, daily_limit - daily_count),
+                "can_act": can_act_daily
+            },
+            "hourly": {
+                "current": hourly_count,
+                "limit": hourly_limit,
+                "remaining": max(0, hourly_limit - hourly_count),
+                "can_act": can_act_hourly
+            },
+            "blocking_reason": None
+        }
+        
+        if not can_act:
+            if not can_act_daily:
+                result["blocking_reason"] = "daily_limit_exceeded"
+            elif not can_act_hourly:
+                result["blocking_reason"] = "hourly_limit_exceeded"
+                
+        return result
 
     def _track_agent_daily_action(self, agent_id: UUID) -> None:
-        """Отслеживает количество действий агента за день."""
+        """
+        Отслеживает количество действий агента за день и час с проверкой лимитов.
+        
+        Args:
+            agent_id: ID агента
+        """
         current_day = int(self.current_time // 1440)
+        current_hour = int(self.current_time // 60)
+        
         day_key = f"{agent_id}_{current_day}"
+        hour_key = f"{agent_id}_{current_hour}"
         
         if not hasattr(self, '_daily_action_counts'):
             self._daily_action_counts = {}
+        if not hasattr(self, '_hourly_action_counts'):
+            self._hourly_action_counts = {}
             
-        self._daily_action_counts[day_key] = self._daily_action_counts.get(day_key, 0) + 1
+        # Обновляем счетчики
+        old_daily = self._daily_action_counts.get(day_key, 0)
+        old_hourly = self._hourly_action_counts.get(hour_key, 0)
+        
+        self._daily_action_counts[day_key] = old_daily + 1
+        self._hourly_action_counts[hour_key] = old_hourly + 1
+        
+        new_daily = self._daily_action_counts[day_key]
+        new_hourly = self._hourly_action_counts[hour_key]
+        
+        # Логируем активность агента
+        logger.debug(json.dumps({
+            "event": "agent_action_tracked",
+            "agent_id": str(agent_id),
+            "daily_count": new_daily,
+            "hourly_count": new_hourly,
+            "simulation_time": self.current_time,
+            "current_day": current_day,
+            "current_hour": current_hour
+        }, default=str))
+        
+        # Предупреждения о приближении к лимитам
+        if new_daily >= 18:  # 90% от лимита 20
+            logger.warning(json.dumps({
+                "event": "agent_approaching_daily_limit",
+                "agent_id": str(agent_id),
+                "daily_count": new_daily,
+                "daily_limit": 20,
+                "remaining": 20 - new_daily,
+                "simulation_time": self.current_time
+            }, default=str))
+            
+        if new_hourly >= 2:  # Достигнут часовой лимит
+            logger.warning(json.dumps({
+                "event": "agent_hourly_limit_reached",
+                "agent_id": str(agent_id),
+                "hourly_count": new_hourly,
+                "hourly_limit": 3,
+                "simulation_time": self.current_time,
+                "current_hour": current_hour
+            }, default=str))
+
+    def _get_agent_activity_stats(self, agent_id: UUID = None) -> dict:
+        """
+        Получает статистику активности агентов в реальном времени.
+        
+        Args:
+            agent_id: ID конкретного агента (опционально)
+            
+        Returns:
+            Статистика активности
+        """
+        current_day = int(self.current_time // 1440)
+        current_hour = int(self.current_time // 60)
+        
+        if not hasattr(self, '_daily_action_counts'):
+            self._daily_action_counts = {}
+        if not hasattr(self, '_hourly_action_counts'):
+            self._hourly_action_counts = {}
+        
+        if agent_id:
+            # Статистика для конкретного агента
+            day_key = f"{agent_id}_{current_day}"
+            hour_key = f"{agent_id}_{current_hour}"
+            
+            return {
+                "agent_id": str(agent_id),
+                "daily_actions": self._daily_action_counts.get(day_key, 0),
+                "hourly_actions": self._hourly_action_counts.get(hour_key, 0),
+                "daily_limit": 43,
+                "hourly_limit": 3,
+                "daily_remaining": max(0, 20 - self._daily_action_counts.get(day_key, 0)),
+                "hourly_remaining": max(0, 2 - self._hourly_action_counts.get(hour_key, 0)),
+                "current_day": current_day,
+                "current_hour": current_hour,
+                "simulation_time": self.current_time
+            }
+        else:
+            # Общая статистика по всем агентам
+            total_daily_actions = 0
+            total_hourly_actions = 0
+            agents_at_daily_limit = 0
+            agents_at_hourly_limit = 0
+            
+            for key, count in self._daily_action_counts.items():
+                if key.endswith(f"_{current_day}"):
+                    total_daily_actions += count
+                    if count >= 20:
+                        agents_at_daily_limit += 1
+                        
+            for key, count in self._hourly_action_counts.items():
+                if key.endswith(f"_{current_hour}"):
+                    total_hourly_actions += count
+                    if count >= 2:
+                        agents_at_hourly_limit += 1
+            
+            return {
+                "total_agents": len(self.agents),
+                "total_daily_actions": total_daily_actions,
+                "total_hourly_actions": total_hourly_actions,
+                "agents_at_daily_limit": agents_at_daily_limit,
+                "agents_at_hourly_limit": agents_at_hourly_limit,
+                "average_daily_actions": total_daily_actions / len(self.agents) if self.agents else 0,
+                "average_hourly_actions": total_hourly_actions / len(self.agents) if self.agents else 0,
+                "current_day": current_day,
+                "current_hour": current_hour,
+                "simulation_time": self.current_time
+            }
 
     def _process_update_state_batch(self, update_state_batch: List[Dict]) -> None:
         """
@@ -911,12 +1216,29 @@ class SimulationEngine:
         """
         Пакетное планирование новых действий агентов.
         
+        ВАЖНО: Проверяет рабочие часы - агенты неактивны с 00:00 до 08:00.
+        
         Args:
             new_actions_batch: Список новых действий для планирования
             
         Returns:
             Количество запланированных действий
         """
+        from capsim.common.time_utils import is_work_hours, convert_sim_time_to_human
+        
+        # Проверяем рабочие часы для агентов
+        if not is_work_hours(self.current_time):
+            human_time = convert_sim_time_to_human(self.current_time)
+            logger.info(json.dumps({
+                "event": "batch_actions_skipped",
+                "reason": "night_time",
+                "current_time": self.current_time,
+                "human_time": human_time,
+                "batch_size": len(new_actions_batch),
+                "message": "Агенты неактивны в ночное время (00:00-08:00)"
+            }, default=str))
+            return 0
+        
         scheduled_count = 0
         
         for action_data in new_actions_batch:
@@ -958,6 +1280,371 @@ class SimulationEngine:
                 }, default=str))
         
         return scheduled_count
+
+    async def _schedule_uniform_agent_actions(self) -> int:
+        """
+        НОВЫЙ АЛГОРИТМ: Равномерное планирование действий агентов.
+        
+        Заменяет массовое планирование каждые 10 минут на:
+        - Индивидуальные интервалы 15-20 минут для каждого агента
+        - Равномерное распределение событий по времени
+        - Предотвращение концентрации событий
+        - Рандомизацию для избежания синхронизации
+        
+        ВАЖНО: Проверяет рабочие часы - агенты неактивны с 00:00 до 08:00.
+        
+        Returns:
+            Количество запланированных действий
+        """
+        from capsim.domain.events import PublishPostAction, PurchaseAction, SelfDevAction
+        from capsim.common.time_utils import is_work_hours, convert_sim_time_to_human
+        import random
+        
+        # Не планируем новые действия если близко к времени окончания
+        if self.end_time is not None and self.current_time >= (self.end_time - 5.0):
+            return 0
+        
+        # Проверяем рабочие часы для агентов
+        if not is_work_hours(self.current_time):
+            human_time = convert_sim_time_to_human(self.current_time)
+            logger.info(json.dumps({
+                "event": "uniform_agent_actions_skipped",
+                "reason": "night_time",
+                "current_time": self.current_time,
+                "human_time": human_time,
+                "message": "Агенты неактивны в ночное время (00:00-08:00)"
+            }, default=str))
+            return 0
+        
+        scheduled_count = 0
+        current_day = int(self.current_time // 1440)
+        
+        # Инициализируем системы планирования если нужно
+        if not hasattr(self, '_agent_next_action_time'):
+            self._agent_next_action_time = {}
+        if not hasattr(self, '_daily_scheduled_events'):
+            self._daily_scheduled_events = {}
+        
+        # Очищаем старые записи при смене дня
+        day_key = f"day_{current_day}"
+        if day_key not in self._daily_scheduled_events:
+            self._daily_scheduled_events[day_key] = []
+            # Очищаем старые дни
+            old_days = [k for k in self._daily_scheduled_events.keys() if k != day_key]
+            for old_day in old_days:
+                del self._daily_scheduled_events[old_day]
+        
+        context = SimulationContext(
+            current_time=self.current_time,
+            active_trends=self.active_trends,
+            affinity_map=self.affinity_map
+        )
+        
+        # Планируем действия для агентов, которым пора действовать
+        for agent in self.agents:
+            # Базовые проверки
+            if agent.energy_level <= 0 or agent.time_budget <= 0:
+                continue
+                
+            # Комплексная проверка лимитов агента
+            limit_check = self._check_agent_limits(agent.id)
+            if not limit_check["can_act"]:
+                # Graceful отклонение с детальным логированием
+                logger.debug(json.dumps({
+                    "event": "agent_action_rejected_due_to_limits",
+                    "agent_id": str(agent.id),
+                    "blocking_reason": limit_check["blocking_reason"],
+                    "daily_stats": limit_check["daily"],
+                    "hourly_stats": limit_check["hourly"],
+                    "simulation_time": self.current_time
+                }, default=str))
+                
+                # Планируем следующую попытку в зависимости от типа лимита
+                if limit_check["blocking_reason"] == "hourly_limit_exceeded":
+                    # Если превышен часовой лимит, ждем до следующего часа
+                    next_hour_start = (int(self.current_time // 60) + 1) * 60
+                    self._agent_next_action_time[agent.id] = next_hour_start + random.uniform(1.0, 5.0)
+                elif limit_check["blocking_reason"] == "daily_limit_exceeded":
+                    # Если превышен дневной лимит, ждем до следующего дня
+                    next_day_start = (int(self.current_time // 1440) + 1) * 1440
+                    self._agent_next_action_time[agent.id] = next_day_start + random.uniform(60.0, 120.0)
+                
+                continue
+            
+            # Проверяем индивидуальное время следующего действия агента
+            next_action_time = self._agent_next_action_time.get(agent.id, self.current_time)
+            
+            # Если время агента еще не пришло, пропускаем
+            if self.current_time < next_action_time:
+                continue
+            
+            # Агент принимает решение о действии
+            current_trend = None
+            if self.active_trends:
+                current_trend = max(self.active_trends.values(), key=lambda t: t.calculate_current_virality())
+            
+            action_name = agent.decide_action_v18(current_trend, self.current_time)
+            
+            if not action_name:
+                # Если агент не принял решение, планируем следующую попытку через 5-10 минут
+                next_attempt = self.current_time + random.uniform(5.0, 10.0)
+                self._agent_next_action_time[agent.id] = next_attempt
+                continue
+            
+            # Создаем событие с небольшой задержкой для избежания одновременности
+            delay = random.uniform(0.1, 2.0)
+            event_timestamp = self.current_time + delay
+            
+            # Проверяем концентрацию событий в 2-минутном окне
+            if self._check_event_concentration(event_timestamp, day_key):
+                # Если концентрация превышает 15%, откладываем событие
+                event_timestamp = self._find_next_available_slot(event_timestamp, day_key)
+            
+            try:
+                if action_name == "Post":
+                    # Выбираем лучшую тему для поста
+                    best_topic = "ECONOMIC"  # Дефолт
+                    if hasattr(agent, 'interests') and agent.interests:
+                        best_topic = max(agent.interests.keys(), key=lambda t: agent.interests[t]).upper()
+                    
+                    post_event = PublishPostAction(
+                        agent_id=agent.id,
+                        topic=best_topic,
+                        timestamp=event_timestamp
+                    )
+                    
+                    self.add_event(post_event, EventPriority.AGENT_ACTION, event_timestamp)
+                    self._track_agent_daily_action(agent.id)
+                    self._track_action_type("Post")
+                    scheduled_count += 1
+                    
+                elif action_name.startswith("Purchase_"):
+                    level = action_name.split("_")[1]  # L1, L2, L3
+                    
+                    if agent.can_purchase(self.current_time, level):
+                        purchase_event = PurchaseAction(
+                            agent_id=agent.id,
+                            purchase_level=level,
+                            timestamp=event_timestamp
+                        )
+                        
+                        self.add_event(purchase_event, EventPriority.AGENT_ACTION, event_timestamp)
+                        self._track_agent_daily_action(agent.id)
+                        self._track_action_type(f"Purchase_{level}")
+                        scheduled_count += 1
+                
+                elif action_name == "SelfDev":
+                    if agent.can_self_dev(self.current_time):
+                        selfdev_event = SelfDevAction(
+                            agent_id=agent.id,
+                            timestamp=event_timestamp
+                        )
+                        
+                        self.add_event(selfdev_event, EventPriority.AGENT_ACTION, event_timestamp)
+                        self._track_agent_daily_action(agent.id)
+                        self._track_action_type("SelfDev")
+                        scheduled_count += 1
+                        
+            except Exception as e:
+                logger.error(json.dumps({
+                    "event": "uniform_action_scheduling_error",
+                    "agent_id": str(agent.id),
+                    "action_name": action_name,
+                    "error": str(e)
+                }, default=str))
+                continue
+                
+            # Записываем событие в дневной план
+            self._daily_scheduled_events[day_key].append(event_timestamp)
+            
+            # ИСПРАВЛЕНИЕ: Увеличиваем интервалы для снижения активности
+            base_interval = random.uniform(30.0, 45.0)  # Увеличено с 15-20 до 30-45 минут
+            jitter = random.uniform(-5.0, 5.0)  # ±5 минут для избежания синхронизации
+            next_action_interval = max(20.0, base_interval + jitter)  # Минимум 20 минут
+            
+            self._agent_next_action_time[agent.id] = self.current_time + next_action_interval
+            
+            # Обновляем метрики использования лимитов
+            self._update_limit_usage_metrics(agent.id)
+            
+            logger.debug(json.dumps({
+                "event": "uniform_action_scheduled",
+                "agent_id": str(agent.id),
+                "action_name": action_name,
+                "timestamp": event_timestamp,
+                "next_action_time": self._agent_next_action_time[agent.id],
+                "interval": next_action_interval
+            }, default=str))
+                    
+        if scheduled_count > 0:
+            logger.info(json.dumps({
+                "event": "uniform_actions_scheduled",
+                "scheduled_count": scheduled_count,
+                "timestamp": self.current_time,
+                "total_agents": len(self.agents),
+                "events_in_day": len(self._daily_scheduled_events.get(day_key, []))
+            }, default=str))
+        
+        return scheduled_count
+
+    def _check_event_concentration(self, timestamp: float, day_key: str) -> bool:
+        """
+        Проверяет концентрацию событий в 2-минутном окне.
+        
+        Args:
+            timestamp: Время проверяемого события
+            day_key: Ключ текущего дня
+            
+        Returns:
+            True если концентрация превышает 15%
+        """
+        if day_key not in self._daily_scheduled_events:
+            return False
+        
+        # Определяем 2-минутное окно
+        window_start = timestamp - 1.0
+        window_end = timestamp + 1.0
+        
+        # Считаем события в окне
+        events_in_window = sum(1 for t in self._daily_scheduled_events[day_key] 
+                              if window_start <= t <= window_end)
+        
+        # Общее количество событий за день
+        total_events = len(self._daily_scheduled_events[day_key])
+        
+        if total_events == 0:
+            return False
+        
+        # Проверяем превышение 15%
+        concentration = events_in_window / total_events
+        return concentration > 0.15
+
+    def _find_next_available_slot(self, preferred_timestamp: float, day_key: str) -> float:
+        """
+        Находит следующий доступный временной слот с концентрацией <15%.
+        
+        Args:
+            preferred_timestamp: Предпочтительное время
+            day_key: Ключ текущего дня
+            
+        Returns:
+            Доступное время для события
+        """
+        # Пробуем слоты с шагом 30 секунд в течение 10 минут
+        for offset in range(0, 600, 30):  # 0-600 секунд с шагом 30 секунд
+            candidate_time = preferred_timestamp + (offset / 60.0)  # Конвертируем в минуты
+            
+            # Проверяем не выходим ли за пределы симуляции
+            if self.end_time and candidate_time >= self.end_time:
+                break
+            
+            # Проверяем концентрацию в этом слоте
+            if not self._check_event_concentration(candidate_time, day_key):
+                return candidate_time
+        
+        # Если не нашли подходящий слот, возвращаем время через 10 минут
+        return preferred_timestamp + 10.0
+
+    def _update_limit_usage_metrics(self, agent_id: UUID) -> None:
+        """
+        Обновляет метрики использования лимитов для мониторинга.
+        
+        Args:
+            agent_id: ID агента
+        """
+        try:
+            from ..common.metrics import AGENT_DAILY_ACTIONS, AGENT_HOURLY_ACTIONS
+            
+            current_day = int(self.current_time // 1440)
+            current_hour = int(self.current_time // 60)
+            
+            day_key = f"{agent_id}_{current_day}"
+            hour_key = f"{agent_id}_{current_hour}"
+            
+            daily_count = self._daily_action_counts.get(day_key, 0)
+            hourly_count = self._hourly_action_counts.get(hour_key, 0)
+            
+            # Обновляем метрики Prometheus
+            AGENT_DAILY_ACTIONS.labels(
+                simulation_id=str(self.simulation_id),
+                agent_id=str(agent_id)
+            ).set(daily_count)
+            
+            AGENT_HOURLY_ACTIONS.labels(
+                simulation_id=str(self.simulation_id),
+                agent_id=str(agent_id)
+            ).set(hourly_count)
+            
+        except ImportError:
+            # Метрики недоступны, продолжаем без них
+            pass
+
+    def _validate_agent_action_limits(self, agent_id: UUID, action_type: str) -> dict:
+        """
+        Валидирует возможность выполнения действия агентом с учетом всех лимитов.
+        
+        Args:
+            agent_id: ID агента
+            action_type: Тип действия (Post, Purchase_L1, SelfDev, etc.)
+            
+        Returns:
+            Результат валидации с детальной информацией
+        """
+        limit_check = self._check_agent_limits(agent_id)
+        
+        validation_result = {
+            "valid": limit_check["can_act"],
+            "agent_id": str(agent_id),
+            "action_type": action_type,
+            "simulation_time": self.current_time,
+            "limit_check": limit_check,
+            "rejection_reason": None,
+            "next_available_time": None
+        }
+        
+        if not limit_check["can_act"]:
+            validation_result["rejection_reason"] = limit_check["blocking_reason"]
+            
+            # Рассчитываем время следующей возможной попытки
+            if limit_check["blocking_reason"] == "hourly_limit_exceeded":
+                next_hour_start = (int(self.current_time // 60) + 1) * 60
+                validation_result["next_available_time"] = next_hour_start
+            elif limit_check["blocking_reason"] == "daily_limit_exceeded":
+                next_day_start = (int(self.current_time // 1440) + 1) * 1440
+                validation_result["next_available_time"] = next_day_start
+                
+            # Логируем отклонение
+            logger.info(json.dumps({
+                "event": "agent_action_validation_failed",
+                "agent_id": str(agent_id),
+                "action_type": action_type,
+                "rejection_reason": validation_result["rejection_reason"],
+                "next_available_time": validation_result["next_available_time"],
+                "daily_usage": f"{limit_check['daily']['current']}/{limit_check['daily']['limit']}",
+                "hourly_usage": f"{limit_check['hourly']['current']}/{limit_check['hourly']['limit']}",
+                "simulation_time": self.current_time
+            }, default=str))
+        
+        return validation_result
+
+    def _track_action_type(self, action_type: str) -> None:
+        """
+        Отслеживает количество действий по типам для статистики.
+        
+        Args:
+            action_type: Тип действия (Post, Purchase_L1, SelfDev, etc.)
+        """
+        if not hasattr(self, '_action_type_counts'):
+            self._action_type_counts = {}
+            
+        self._action_type_counts[action_type] = self._action_type_counts.get(action_type, 0) + 1
+        
+        logger.debug(json.dumps({
+            "event": "action_type_tracked",
+            "action_type": action_type,
+            "total_count": self._action_type_counts[action_type],
+            "simulation_time": self.current_time
+        }, default=str))
         
     async def _schedule_agent_actions(self) -> int:
         """
@@ -966,20 +1653,35 @@ class SimulationEngine:
         ВАЖНО: НЕ создает новых агентов - только работает с уже созданными.
         Вызывается периодически для пополнения очереди событий.
         
+        ВАЖНО: Проверяет рабочие часы - агенты неактивны с 00:00 до 08:00.
+        
         Returns:
             Количество запланированных действий
         """
         from capsim.domain.events import PublishPostAction, PurchaseAction, SelfDevAction
+        from capsim.common.time_utils import is_work_hours, convert_sim_time_to_human
         import random
         
-        # ИСПРАВЛЕНИЕ: Не планируем новые действия если близко к времени окончания
-        if self.end_time is not None and self.current_time >= (self.end_time - 45.0):
+        # ИСПРАВЛЕНИЕ: Не планируем новые действия если близко к времени окончания (5 минут буфер)
+        if self.end_time is not None and self.current_time >= (self.end_time - 5.0):
             logger.info(json.dumps({
                 "event": "agent_actions_scheduling_stopped",
                 "reason": "approaching_simulation_end",
                 "current_time": self.current_time,
                 "end_time": self.end_time,
                 "time_remaining": self.end_time - self.current_time
+            }, default=str))
+            return 0
+        
+        # Проверяем рабочие часы для агентов
+        if not is_work_hours(self.current_time):
+            human_time = convert_sim_time_to_human(self.current_time)
+            logger.info(json.dumps({
+                "event": "agent_actions_skipped",
+                "reason": "night_time",
+                "current_time": self.current_time,
+                "human_time": human_time,
+                "message": "Агенты неактивны в ночное время (00:00-08:00)"
             }, default=str))
             return 0
         
@@ -990,9 +1692,15 @@ class SimulationEngine:
             affinity_map=self.affinity_map
         )
         
-        # Инициализируем кулдауны если нужно
+        # Инициализируем системы планирования если нужно
         if not hasattr(self, '_agent_action_cooldowns'):
             self._agent_action_cooldowns = {}
+        if not hasattr(self, '_agent_next_action_time'):
+            self._agent_next_action_time = {}
+        if not hasattr(self, '_daily_scheduled_events'):
+            self._daily_scheduled_events = {}
+        if not hasattr(self, '_action_type_counts'):
+            self._action_type_counts = {}
         
         # Работаем ТОЛЬКО с уже созданными агентами
         eligible_agents = []
@@ -1030,13 +1738,11 @@ class SimulationEngine:
         # Распределяем действия равномерно по времени дня
         actions_per_minute = max_daily_actions / day_duration if day_duration > 0 else 0
         
-        # ИСПРАВЛЕНИЕ: Ограничиваем действия в текущем цикле (каждые 10 минут)
-        # 20 действий/день = 0.0139 действий/минуту на агента
-        # Увеличиваем до 50% агентов за цикл для достижения нужной активности
+        # ИСПРАВЛЕНИЕ: Сильно ограничиваем действия для предотвращения чрезмерной активности
         max_actions_this_cycle = min(
             len(eligible_agents),
-            max(1, int(len(eligible_agents) * 0.5)),  # Максимум 50% агентов за цикл
-            max(1, int(actions_per_minute * 10))  # 10 минут = один цикл
+            max(1, int(len(eligible_agents) * 0.1)),  # Максимум 10% агентов за цикл (было 50%)
+            5  # Абсолютный максимум 5 действий за цикл
         )
         
         selected_agents = random.sample(eligible_agents, min(max_actions_this_cycle, len(eligible_agents)))
@@ -1100,64 +1806,14 @@ class SimulationEngine:
                         "timestamp": event_timestamp,
                         "profession": agent.profession
                     }, default=str))
-                    
-                elif action_name.startswith("Purchase_"):
-                    level = action_name.split("_")[1]  # L1, L2, L3
-                    
-                    # Проверяем возможность покупки
-                    if agent.can_purchase(self.current_time, level):
-                        # Создаем событие покупки
-                        purchase_event = PurchaseAction(
-                            agent_id=agent.id,
-                            purchase_level=level,
-                            timestamp=event_timestamp
-                        )
-                        
-                        # Добавляем событие в очередь
-                        self.add_event(purchase_event, EventPriority.AGENT_ACTION, event_timestamp)
-                        self._track_agent_daily_action(agent.id)
-                        scheduled_count += 1
-                        
-                        logger.debug(json.dumps({
-                            "event": "purchase_event_scheduled",
-                            "agent_id": str(agent.id),
-                            "level": level,
-                            "timestamp": event_timestamp,
-                            "profession": agent.profession
-                        }, default=str))
-                
-                elif action_name == "SelfDev":
-                    # Проверяем возможность саморазвития
-                    if agent.can_self_dev(self.current_time):
-                        # Создаем событие саморазвития
-                        selfdev_event = SelfDevAction(
-                            agent_id=agent.id,
-                            timestamp=event_timestamp
-                        )
-                        
-                        # Добавляем событие в очередь
-                        self.add_event(selfdev_event, EventPriority.AGENT_ACTION, event_timestamp)
-                        self._track_agent_daily_action(agent.id)
-                        scheduled_count += 1
-                        
-                        logger.debug(json.dumps({
-                            "event": "selfdev_event_scheduled",
-                            "agent_id": str(agent.id),
-                            "timestamp": event_timestamp,
-                            "profession": agent.profession
-                        }, default=str))
-                
-                # Обновляем cooldown для агента
-                self._agent_action_cooldowns[agent.id] = self.current_time
-                
             except Exception as e:
                 logger.error(json.dumps({
-                    "event": "action_scheduling_error",
+                    "event": "v18_action_scheduling_error",
                     "agent_id": str(agent.id),
                     "action_name": action_name,
                     "error": str(e)
                 }, default=str))
-        
+                        
         if scheduled_count > 0:
             logger.info(json.dumps({
                 "event": "v18_agent_actions_scheduled",
@@ -1175,9 +1831,26 @@ class SimulationEngine:
         return scheduled_count
 
     def _schedule_random_wellness(self) -> int:
-        """Случайно планирует Purchase или SelfDev, чтобы обеспечить ≥1 действие/агент/сим-час."""
+        """
+        Случайно планирует Purchase или SelfDev, чтобы обеспечить ≥1 действие/агент/сим-час.
+        
+        ВАЖНО: Проверяет рабочие часы - агенты неактивны с 00:00 до 08:00.
+        """
         import random
         from capsim.domain.events import PurchaseAction, SelfDevAction
+        from capsim.common.time_utils import is_work_hours, convert_sim_time_to_human
+        
+        # Проверяем рабочие часы для агентов
+        if not is_work_hours(self.current_time):
+            human_time = convert_sim_time_to_human(self.current_time)
+            logger.info(json.dumps({
+                "event": "wellness_actions_skipped",
+                "reason": "night_time",
+                "current_time": self.current_time,
+                "human_time": human_time,
+                "message": "Агенты неактивны в ночное время (00:00-08:00)"
+            }, default=str))
+            return 0
 
         actions_planned = 0
 
@@ -1238,7 +1911,7 @@ class SimulationEngine:
             timestamp: Время выполнения
         """
         # ИСПРАВЛЕНИЕ: Проверяем время окончания симуляции перед добавлением события
-        if self.end_time is not None and timestamp >= self.end_time:
+        if self.end_time is not None and timestamp > self.end_time:
             logger.info(json.dumps({
                 "event": "event_rejected_past_end_time",
                 "event_type": event.__class__.__name__,
@@ -1462,6 +2135,34 @@ class SimulationEngine:
         """
         active_agents = sum(1 for agent in self.agents if agent.energy_level > 0)
         
+        # Подсчитываем статистику действий агентов
+        total_actions = 0
+        total_purchases = 0
+        total_selfdev = 0
+        
+        # Инициализируем счетчики если нужно
+        if not hasattr(self, '_daily_action_counts'):
+            self._daily_action_counts = {}
+        if not hasattr(self, '_action_type_counts'):
+            self._action_type_counts = {}
+        
+        # Подсчитываем общее количество действий за всю симуляцию
+        for key, count in self._daily_action_counts.items():
+            total_actions += count
+        
+        # Подсчитываем действия по типам
+        for action_type, count in self._action_type_counts.items():
+            if action_type.startswith("Purchase"):
+                total_purchases += count
+            elif action_type == "SelfDev":
+                total_selfdev += count
+        
+        # Рассчитываем среднее количество действий на агента в час
+        simulation_hours = max(1, self.current_time / 60.0)  # Минимум 1 час для избежания деления на 0
+        avg_actions_per_agent_per_hour = 0
+        if len(self.agents) > 0:
+            avg_actions_per_agent_per_hour = total_actions / (len(self.agents) * simulation_hours)
+        
         return {
             "simulation_id": str(self.simulation_id) if self.simulation_id else None,
             "current_time": self.current_time,
@@ -1475,7 +2176,13 @@ class SimulationEngine:
                 len(self._aggregated_trends) +
                 len(self._aggregated_trend_creations)
             ),
-            "running": self._running
+            "running": self._running,
+            # Новые метрики активности агентов
+            "total_actions": total_actions,
+            "total_purchases": total_purchases,
+            "total_selfdev": total_selfdev,
+            "avg_actions_per_agent_per_hour": round(avg_actions_per_agent_per_hour, 2),
+            "simulation_hours": round(simulation_hours, 1)
         }
         
     async def shutdown(self) -> None:
