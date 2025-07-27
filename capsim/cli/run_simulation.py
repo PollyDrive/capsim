@@ -94,8 +94,11 @@ async def run_simulation_cli(
         # Финальная статистика
         final_stats = engine.get_simulation_stats()
         
+        # Импортируем функцию конвертации времени
+        from ..common.time_utils import convert_sim_time_to_human, format_simulation_time_detailed
+        
         print("\n📈 Результаты симуляции:")
-        print(f"  Время выполнения: {final_stats['current_time']:.1f} минут")
+        print(f"  Время выполнения: {final_stats['current_time']:.1f} минут ({format_simulation_time_detailed(final_stats['current_time'])})")
         print(f"  Активных агентов: {final_stats['active_agents']}/{final_stats['total_agents']}")
         print(f"  Созданных трендов: {final_stats['active_trends']}")
         print(f"  Среднее действий/агент/час: {final_stats.get('avg_actions_per_agent_per_hour', 0):.2f}")
