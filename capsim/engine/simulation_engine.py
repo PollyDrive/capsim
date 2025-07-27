@@ -746,7 +746,23 @@ class SimulationEngine:
         - PublishPost для агентов с высокой социальной активностью
         - Purchase для агентов с достаточными финансовыми возможностями  
         - SelfDev для агентов с низкой энергией
+        
+        ВАЖНО: Проверяет рабочие часы - агенты неактивны с 00:00 до 08:00.
         """
+        from capsim.common.time_utils import is_work_hours, convert_sim_time_to_human
+        
+        # Проверяем рабочие часы для агентов
+        if not is_work_hours(self.current_time):
+            human_time = convert_sim_time_to_human(self.current_time)
+            logger.info(json.dumps({
+                "event": "agent_actions_skipped",
+                "reason": "night_time",
+                "current_time": self.current_time,
+                "human_time": human_time,
+                "message": "Агенты неактивны в ночное время (00:00-08:00)"
+            }, default=str))
+            return 0
+        
         scheduled_count = 0
         context = SimulationContext(
             current_time=self.current_time,
@@ -1200,12 +1216,29 @@ class SimulationEngine:
         """
         Пакетное планирование новых действий агентов.
         
+        ВАЖНО: Проверяет рабочие часы - агенты неактивны с 00:00 до 08:00.
+        
         Args:
             new_actions_batch: Список новых действий для планирования
             
         Returns:
             Количество запланированных действий
         """
+        from capsim.common.time_utils import is_work_hours, convert_sim_time_to_human
+        
+        # Проверяем рабочие часы для агентов
+        if not is_work_hours(self.current_time):
+            human_time = convert_sim_time_to_human(self.current_time)
+            logger.info(json.dumps({
+                "event": "batch_actions_skipped",
+                "reason": "night_time",
+                "current_time": self.current_time,
+                "human_time": human_time,
+                "batch_size": len(new_actions_batch),
+                "message": "Агенты неактивны в ночное время (00:00-08:00)"
+            }, default=str))
+            return 0
+        
         scheduled_count = 0
         
         for action_data in new_actions_batch:
@@ -1258,14 +1291,29 @@ class SimulationEngine:
         - Предотвращение концентрации событий
         - Рандомизацию для избежания синхронизации
         
+        ВАЖНО: Проверяет рабочие часы - агенты неактивны с 00:00 до 08:00.
+        
         Returns:
             Количество запланированных действий
         """
         from capsim.domain.events import PublishPostAction, PurchaseAction, SelfDevAction
+        from capsim.common.time_utils import is_work_hours, convert_sim_time_to_human
         import random
         
         # Не планируем новые действия если близко к времени окончания
         if self.end_time is not None and self.current_time >= (self.end_time - 5.0):
+            return 0
+        
+        # Проверяем рабочие часы для агентов
+        if not is_work_hours(self.current_time):
+            human_time = convert_sim_time_to_human(self.current_time)
+            logger.info(json.dumps({
+                "event": "uniform_agent_actions_skipped",
+                "reason": "night_time",
+                "current_time": self.current_time,
+                "human_time": human_time,
+                "message": "Агенты неактивны в ночное время (00:00-08:00)"
+            }, default=str))
             return 0
         
         scheduled_count = 0
@@ -1605,10 +1653,13 @@ class SimulationEngine:
         ВАЖНО: НЕ создает новых агентов - только работает с уже созданными.
         Вызывается периодически для пополнения очереди событий.
         
+        ВАЖНО: Проверяет рабочие часы - агенты неактивны с 00:00 до 08:00.
+        
         Returns:
             Количество запланированных действий
         """
         from capsim.domain.events import PublishPostAction, PurchaseAction, SelfDevAction
+        from capsim.common.time_utils import is_work_hours, convert_sim_time_to_human
         import random
         
         # ИСПРАВЛЕНИЕ: Не планируем новые действия если близко к времени окончания (5 минут буфер)
@@ -1619,6 +1670,18 @@ class SimulationEngine:
                 "current_time": self.current_time,
                 "end_time": self.end_time,
                 "time_remaining": self.end_time - self.current_time
+            }, default=str))
+            return 0
+        
+        # Проверяем рабочие часы для агентов
+        if not is_work_hours(self.current_time):
+            human_time = convert_sim_time_to_human(self.current_time)
+            logger.info(json.dumps({
+                "event": "agent_actions_skipped",
+                "reason": "night_time",
+                "current_time": self.current_time,
+                "human_time": human_time,
+                "message": "Агенты неактивны в ночное время (00:00-08:00)"
             }, default=str))
             return 0
         
@@ -1768,9 +1831,26 @@ class SimulationEngine:
         return scheduled_count
 
     def _schedule_random_wellness(self) -> int:
-        """Случайно планирует Purchase или SelfDev, чтобы обеспечить ≥1 действие/агент/сим-час."""
+        """
+        Случайно планирует Purchase или SelfDev, чтобы обеспечить ≥1 действие/агент/сим-час.
+        
+        ВАЖНО: Проверяет рабочие часы - агенты неактивны с 00:00 до 08:00.
+        """
         import random
         from capsim.domain.events import PurchaseAction, SelfDevAction
+        from capsim.common.time_utils import is_work_hours, convert_sim_time_to_human
+        
+        # Проверяем рабочие часы для агентов
+        if not is_work_hours(self.current_time):
+            human_time = convert_sim_time_to_human(self.current_time)
+            logger.info(json.dumps({
+                "event": "wellness_actions_skipped",
+                "reason": "night_time",
+                "current_time": self.current_time,
+                "human_time": human_time,
+                "message": "Агенты неактивны в ночное время (00:00-08:00)"
+            }, default=str))
+            return 0
 
         actions_planned = 0
 

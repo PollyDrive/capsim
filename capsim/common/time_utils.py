@@ -122,3 +122,36 @@ def get_time_of_day_category(simulation_minutes: float) -> str:
         return "вечер"
     else:
         return "ночь"
+
+
+def is_work_hours(simulation_minutes: float) -> bool:
+    """
+    Проверяет, находится ли симуляционное время в рабочих часах (08:00-24:00).
+    
+    Агенты неактивны с 00:00 до 08:00 человеческого времени.
+    Рабочие часы: 08:00-23:59 (включительно).
+    
+    Args:
+        simulation_minutes: Время в симуляции в минутах
+        
+    Returns:
+        True если время в диапазоне 08:00-23:59, False для 00:00-07:59
+        
+    Examples:
+        >>> is_work_hours(0)      # 08:00 - начало рабочего дня
+        True
+        >>> is_work_hours(120)    # 10:00 - рабочее время
+        True
+        >>> is_work_hours(960)    # 00:00 - ночь, не рабочее время
+        False
+        >>> is_work_hours(480)    # 04:00 - ночь, не рабочее время  
+        False
+        >>> is_work_hours(900)    # 23:00 - поздний вечер, но еще рабочее время
+        True
+    """
+    human_time = convert_sim_time_to_human(simulation_minutes)
+    hour = int(human_time.split(':')[0])
+    
+    # Рабочие часы: 08:00-23:59 (час >= 8)
+    # Нерабочие часы: 00:00-07:59 (час < 8)
+    return hour >= 8
