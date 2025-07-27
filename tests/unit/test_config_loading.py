@@ -1,7 +1,7 @@
 import pytest
 from pathlib import Path
-from src.capsim.main import load_config
-from src.capsim.models.base import SimulationConfig
+from capsim.main import load_config
+from capsim.models.base import SimulationConfig
 
 def test_config_loads_successfully():
     """

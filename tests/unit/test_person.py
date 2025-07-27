@@ -1,5 +1,5 @@
 import pytest
-from src.capsim.models.base import Person
+from capsim.models.base import Person
 
 def test_person_creation():
     person = Person(name="John Doe", age=25)

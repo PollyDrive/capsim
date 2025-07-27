@@ -9,7 +9,7 @@
 *.env
 !.env.example
 
-env.local.md
+# env.local.md moved to docs/environment-variables.md
 # Security & Secrets
 secrets/
 *.key
@@ -71,5 +71,3 @@ docker-compose.override.yml
 *.iml
 
 jupyter-env/
-
-AGENTS.md
