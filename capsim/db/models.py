@@ -114,24 +114,19 @@ class Trend(Base):
 
 
 class Event(Base):
-    """История всех событий симуляции."""
-    __tablename__ = "events"
+    """События симуляции."""
+    __tablename__ = 'events'
     
     event_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    simulation_id = Column(UUID(as_uuid=True), ForeignKey("simulation_runs.run_id"), nullable=False)
-    event_type = Column(String(50), nullable=False)  # PublishPostAction, EnergyRecovery, etc.
-    priority = Column(Integer, nullable=False)  # 1-5
+    simulation_id = Column(UUID(as_uuid=True), ForeignKey('simulation_runs.run_id'), nullable=False)
+    event_type = Column(String(50), nullable=False)
+    priority = Column(Integer, nullable=False)
     timestamp = Column(Float, nullable=False)  # simulation time in minutes
-    
-    # Optional references
-    agent_id = Column(UUID(as_uuid=True), ForeignKey("persons.id"), nullable=True)
-    trend_id = Column(UUID(as_uuid=True), ForeignKey("trends.trend_id"), nullable=True)
-    
-    # Event data
-    event_data = Column(JSON, nullable=True)  # Flexible data storage
-    
-    # Processing metadata
-    processed_at = Column(DateTime, default=datetime.utcnow)
+    action_timestamp = Column(String(5), nullable=True)
+    agent_id = Column(UUID(as_uuid=True), ForeignKey('persons.id'), nullable=True)
+    trend_id = Column(UUID(as_uuid=True), ForeignKey('trends.trend_id'), nullable=True)
+    event_data = Column(JSON, nullable=True)
+    processed_at = Column(DateTime, nullable=True)
     processing_duration_ms = Column(Float, nullable=True)
     
     # Relationships

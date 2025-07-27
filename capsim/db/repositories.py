@@ -546,6 +546,12 @@ class DatabaseRepository:
         
         from ..db.models import Event as DBEvent
         
+        # Импортируем функцию конвертации времени
+        try:
+            from ..common.time_utils import convert_sim_time_to_human
+        except ImportError:
+            convert_sim_time_to_human = None
+        
         async with self.SessionLocal() as session:
             # Создаем объекты Event из данных
             db_events = []
@@ -553,6 +559,9 @@ class DatabaseRepository:
                 # Очищаем данные от служебных полей
                 cleaned_data = event_data.copy()
                 cleaned_data.pop("type", None)
+                
+                if 'timestamp' in cleaned_data and 'action_timestamp' not in cleaned_data and convert_sim_time_to_human:
+                    cleaned_data['action_timestamp'] = convert_sim_time_to_human(cleaned_data['timestamp'])
                 
                 # Конвертируем processed_at обратно в datetime
                 if "processed_at" in cleaned_data and isinstance(cleaned_data["processed_at"], str):
