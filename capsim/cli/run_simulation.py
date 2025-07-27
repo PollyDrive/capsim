@@ -98,6 +98,9 @@ async def run_simulation_cli(
         print(f"  Время выполнения: {final_stats['current_time']:.1f} минут")
         print(f"  Активных агентов: {final_stats['active_agents']}/{final_stats['total_agents']}")
         print(f"  Созданных трендов: {final_stats['active_trends']}")
+        print(f"  Среднее действий/агент/час: {final_stats.get('avg_actions_per_agent_per_hour', 0):.2f}")
+        print(f"  Всего покупок: {final_stats.get('total_purchases', 0)}")
+        print(f"  Всего саморазвитий: {final_stats.get('total_selfdev', 0)}")
         print(f"  ID симуляции: {final_stats['simulation_id']}")
         
         print("\n✅ Симуляция завершена успешно!")

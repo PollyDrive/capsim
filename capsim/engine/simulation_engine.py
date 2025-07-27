@@ -885,7 +885,15 @@ class SimulationEngine:
         return scheduled_count
 
     def _can_agent_act_today(self, agent_id: UUID) -> bool:
-        """Проверяет может ли агент еще действовать сегодня (лимит 20 действий)."""
+        """
+        Проверяет может ли агент еще действовать сегодня (лимит T3: 43 действия).
+        
+        Args:
+            agent_id: ID агента для проверки
+            
+        Returns:
+            True если агент может действовать, False если достигнут дневной лимит
+        """
         current_day = int(self.current_time // 1440)
         day_key = f"{agent_id}_{current_day}"
         
@@ -893,17 +901,238 @@ class SimulationEngine:
             self._daily_action_counts = {}
             
         current_count = self._daily_action_counts.get(day_key, 0)
-        return current_count < 20  # Снижено с 43 до 20 для более реалистичной активности
+        daily_limit = 43  # Лимит T3 согласно ТЗ
+        
+        can_act = current_count < daily_limit
+        
+        if not can_act:
+            logger.debug(json.dumps({
+                "event": "agent_daily_limit_reached",
+                "agent_id": str(agent_id),
+                "current_count": current_count,
+                "daily_limit": daily_limit,
+                "current_day": current_day,
+                "simulation_time": self.current_time
+            }, default=str))
+            
+        return can_act
+
+    def _can_agent_act_this_hour(self, agent_id: UUID) -> bool:
+        """
+        Проверяет может ли агент действовать в текущем часу (лимит: 3 действия в час).
+        
+        Args:
+            agent_id: ID агента для проверки
+            
+        Returns:
+            True если агент может действовать, False если достигнут часовой лимит
+        """
+        current_hour = int(self.current_time // 60)
+        hour_key = f"{agent_id}_{current_hour}"
+        
+        if not hasattr(self, '_hourly_action_counts'):
+            self._hourly_action_counts = {}
+            
+        current_count = self._hourly_action_counts.get(hour_key, 0)
+        hourly_limit = 3  # Максимум 3 действия в час
+        
+        can_act = current_count < hourly_limit
+        
+        if not can_act:
+            logger.debug(json.dumps({
+                "event": "agent_hourly_limit_reached",
+                "agent_id": str(agent_id),
+                "current_count": current_count,
+                "hourly_limit": hourly_limit,
+                "current_hour": current_hour,
+                "simulation_time": self.current_time
+            }, default=str))
+            
+        return can_act
+
+    def _check_agent_limits(self, agent_id: UUID) -> dict:
+        """
+        Комплексная проверка всех лимитов агента с детальной информацией.
+        
+        Args:
+            agent_id: ID агента для проверки
+            
+        Returns:
+            Словарь с результатами проверки лимитов
+        """
+        current_day = int(self.current_time // 1440)
+        current_hour = int(self.current_time // 60)
+        
+        # Инициализируем счетчики если нужно
+        if not hasattr(self, '_daily_action_counts'):
+            self._daily_action_counts = {}
+        if not hasattr(self, '_hourly_action_counts'):
+            self._hourly_action_counts = {}
+            
+        day_key = f"{agent_id}_{current_day}"
+        hour_key = f"{agent_id}_{current_hour}"
+        
+        daily_count = self._daily_action_counts.get(day_key, 0)
+        hourly_count = self._hourly_action_counts.get(hour_key, 0)
+        
+        daily_limit = 43
+        hourly_limit = 3
+        
+        can_act_daily = daily_count < daily_limit
+        can_act_hourly = hourly_count < hourly_limit
+        can_act = can_act_daily and can_act_hourly
+        
+        result = {
+            "can_act": can_act,
+            "daily": {
+                "current": daily_count,
+                "limit": daily_limit,
+                "remaining": max(0, daily_limit - daily_count),
+                "can_act": can_act_daily
+            },
+            "hourly": {
+                "current": hourly_count,
+                "limit": hourly_limit,
+                "remaining": max(0, hourly_limit - hourly_count),
+                "can_act": can_act_hourly
+            },
+            "blocking_reason": None
+        }
+        
+        if not can_act:
+            if not can_act_daily:
+                result["blocking_reason"] = "daily_limit_exceeded"
+            elif not can_act_hourly:
+                result["blocking_reason"] = "hourly_limit_exceeded"
+                
+        return result
 
     def _track_agent_daily_action(self, agent_id: UUID) -> None:
-        """Отслеживает количество действий агента за день."""
+        """
+        Отслеживает количество действий агента за день и час с проверкой лимитов.
+        
+        Args:
+            agent_id: ID агента
+        """
         current_day = int(self.current_time // 1440)
+        current_hour = int(self.current_time // 60)
+        
         day_key = f"{agent_id}_{current_day}"
+        hour_key = f"{agent_id}_{current_hour}"
         
         if not hasattr(self, '_daily_action_counts'):
             self._daily_action_counts = {}
+        if not hasattr(self, '_hourly_action_counts'):
+            self._hourly_action_counts = {}
             
-        self._daily_action_counts[day_key] = self._daily_action_counts.get(day_key, 0) + 1
+        # Обновляем счетчики
+        old_daily = self._daily_action_counts.get(day_key, 0)
+        old_hourly = self._hourly_action_counts.get(hour_key, 0)
+        
+        self._daily_action_counts[day_key] = old_daily + 1
+        self._hourly_action_counts[hour_key] = old_hourly + 1
+        
+        new_daily = self._daily_action_counts[day_key]
+        new_hourly = self._hourly_action_counts[hour_key]
+        
+        # Логируем активность агента
+        logger.debug(json.dumps({
+            "event": "agent_action_tracked",
+            "agent_id": str(agent_id),
+            "daily_count": new_daily,
+            "hourly_count": new_hourly,
+            "simulation_time": self.current_time,
+            "current_day": current_day,
+            "current_hour": current_hour
+        }, default=str))
+        
+        # Предупреждения о приближении к лимитам
+        if new_daily >= 40:  # 93% от лимита 43
+            logger.warning(json.dumps({
+                "event": "agent_approaching_daily_limit",
+                "agent_id": str(agent_id),
+                "daily_count": new_daily,
+                "daily_limit": 43,
+                "remaining": 43 - new_daily,
+                "simulation_time": self.current_time
+            }, default=str))
+            
+        if new_hourly >= 3:  # Достигнут часовой лимит
+            logger.warning(json.dumps({
+                "event": "agent_hourly_limit_reached",
+                "agent_id": str(agent_id),
+                "hourly_count": new_hourly,
+                "hourly_limit": 3,
+                "simulation_time": self.current_time,
+                "current_hour": current_hour
+            }, default=str))
+
+    def _get_agent_activity_stats(self, agent_id: UUID = None) -> dict:
+        """
+        Получает статистику активности агентов в реальном времени.
+        
+        Args:
+            agent_id: ID конкретного агента (опционально)
+            
+        Returns:
+            Статистика активности
+        """
+        current_day = int(self.current_time // 1440)
+        current_hour = int(self.current_time // 60)
+        
+        if not hasattr(self, '_daily_action_counts'):
+            self._daily_action_counts = {}
+        if not hasattr(self, '_hourly_action_counts'):
+            self._hourly_action_counts = {}
+        
+        if agent_id:
+            # Статистика для конкретного агента
+            day_key = f"{agent_id}_{current_day}"
+            hour_key = f"{agent_id}_{current_hour}"
+            
+            return {
+                "agent_id": str(agent_id),
+                "daily_actions": self._daily_action_counts.get(day_key, 0),
+                "hourly_actions": self._hourly_action_counts.get(hour_key, 0),
+                "daily_limit": 43,
+                "hourly_limit": 3,
+                "daily_remaining": max(0, 43 - self._daily_action_counts.get(day_key, 0)),
+                "hourly_remaining": max(0, 3 - self._hourly_action_counts.get(hour_key, 0)),
+                "current_day": current_day,
+                "current_hour": current_hour,
+                "simulation_time": self.current_time
+            }
+        else:
+            # Общая статистика по всем агентам
+            total_daily_actions = 0
+            total_hourly_actions = 0
+            agents_at_daily_limit = 0
+            agents_at_hourly_limit = 0
+            
+            for key, count in self._daily_action_counts.items():
+                if key.endswith(f"_{current_day}"):
+                    total_daily_actions += count
+                    if count >= 43:
+                        agents_at_daily_limit += 1
+                        
+            for key, count in self._hourly_action_counts.items():
+                if key.endswith(f"_{current_hour}"):
+                    total_hourly_actions += count
+                    if count >= 3:
+                        agents_at_hourly_limit += 1
+            
+            return {
+                "total_agents": len(self.agents),
+                "total_daily_actions": total_daily_actions,
+                "total_hourly_actions": total_hourly_actions,
+                "agents_at_daily_limit": agents_at_daily_limit,
+                "agents_at_hourly_limit": agents_at_hourly_limit,
+                "average_daily_actions": total_daily_actions / len(self.agents) if self.agents else 0,
+                "average_hourly_actions": total_hourly_actions / len(self.agents) if self.agents else 0,
+                "current_day": current_day,
+                "current_hour": current_hour,
+                "simulation_time": self.current_time
+            }
 
     def _process_update_state_batch(self, update_state_batch: List[Dict]) -> None:
         """
@@ -1054,8 +1283,29 @@ class SimulationEngine:
             if agent.energy_level <= 0 or agent.time_budget <= 0:
                 continue
                 
-            # Проверяем ежедневный лимит действий (20/день)
-            if not self._can_agent_act_today(agent.id):
+            # Комплексная проверка лимитов агента
+            limit_check = self._check_agent_limits(agent.id)
+            if not limit_check["can_act"]:
+                # Graceful отклонение с детальным логированием
+                logger.debug(json.dumps({
+                    "event": "agent_action_rejected_due_to_limits",
+                    "agent_id": str(agent.id),
+                    "blocking_reason": limit_check["blocking_reason"],
+                    "daily_stats": limit_check["daily"],
+                    "hourly_stats": limit_check["hourly"],
+                    "simulation_time": self.current_time
+                }, default=str))
+                
+                # Планируем следующую попытку в зависимости от типа лимита
+                if limit_check["blocking_reason"] == "hourly_limit_exceeded":
+                    # Если превышен часовой лимит, ждем до следующего часа
+                    next_hour_start = (int(self.current_time // 60) + 1) * 60
+                    self._agent_next_action_time[agent.id] = next_hour_start + random.uniform(1.0, 5.0)
+                elif limit_check["blocking_reason"] == "daily_limit_exceeded":
+                    # Если превышен дневной лимит, ждем до следующего дня
+                    next_day_start = (int(self.current_time // 1440) + 1) * 1440
+                    self._agent_next_action_time[agent.id] = next_day_start + random.uniform(60.0, 120.0)
+                
                 continue
             
             # Проверяем индивидуальное время следующего действия агента
@@ -1102,6 +1352,7 @@ class SimulationEngine:
                     
                     self.add_event(post_event, EventPriority.AGENT_ACTION, event_timestamp)
                     self._track_agent_daily_action(agent.id)
+                    self._track_action_type("Post")
                     scheduled_count += 1
                     
                 elif action_name.startswith("Purchase_"):
@@ -1116,6 +1367,7 @@ class SimulationEngine:
                         
                         self.add_event(purchase_event, EventPriority.AGENT_ACTION, event_timestamp)
                         self._track_agent_daily_action(agent.id)
+                        self._track_action_type(f"Purchase_{level}")
                         scheduled_count += 1
                 
                 elif action_name == "SelfDev":
@@ -1127,6 +1379,7 @@ class SimulationEngine:
                         
                         self.add_event(selfdev_event, EventPriority.AGENT_ACTION, event_timestamp)
                         self._track_agent_daily_action(agent.id)
+                        self._track_action_type("SelfDev")
                         scheduled_count += 1
                 
                 # Записываем событие в дневной план
@@ -1138,6 +1391,9 @@ class SimulationEngine:
                 next_action_interval = max(10.0, base_interval + jitter)  # Минимум 10 минут
                 
                 self._agent_next_action_time[agent.id] = self.current_time + next_action_interval
+                
+                # Обновляем метрики использования лимитов
+                self._update_limit_usage_metrics(agent.id)
                 
                 logger.debug(json.dumps({
                     "event": "uniform_action_scheduled",
@@ -1224,6 +1480,107 @@ class SimulationEngine:
         
         # Если не нашли подходящий слот, возвращаем время через 10 минут
         return preferred_timestamp + 10.0
+
+    def _update_limit_usage_metrics(self, agent_id: UUID) -> None:
+        """
+        Обновляет метрики использования лимитов для мониторинга.
+        
+        Args:
+            agent_id: ID агента
+        """
+        try:
+            from ..common.metrics import AGENT_DAILY_ACTIONS, AGENT_HOURLY_ACTIONS
+            
+            current_day = int(self.current_time // 1440)
+            current_hour = int(self.current_time // 60)
+            
+            day_key = f"{agent_id}_{current_day}"
+            hour_key = f"{agent_id}_{current_hour}"
+            
+            daily_count = self._daily_action_counts.get(day_key, 0)
+            hourly_count = self._hourly_action_counts.get(hour_key, 0)
+            
+            # Обновляем метрики Prometheus
+            AGENT_DAILY_ACTIONS.labels(
+                simulation_id=str(self.simulation_id),
+                agent_id=str(agent_id)
+            ).set(daily_count)
+            
+            AGENT_HOURLY_ACTIONS.labels(
+                simulation_id=str(self.simulation_id),
+                agent_id=str(agent_id)
+            ).set(hourly_count)
+            
+        except ImportError:
+            # Метрики недоступны, продолжаем без них
+            pass
+
+    def _validate_agent_action_limits(self, agent_id: UUID, action_type: str) -> dict:
+        """
+        Валидирует возможность выполнения действия агентом с учетом всех лимитов.
+        
+        Args:
+            agent_id: ID агента
+            action_type: Тип действия (Post, Purchase_L1, SelfDev, etc.)
+            
+        Returns:
+            Результат валидации с детальной информацией
+        """
+        limit_check = self._check_agent_limits(agent_id)
+        
+        validation_result = {
+            "valid": limit_check["can_act"],
+            "agent_id": str(agent_id),
+            "action_type": action_type,
+            "simulation_time": self.current_time,
+            "limit_check": limit_check,
+            "rejection_reason": None,
+            "next_available_time": None
+        }
+        
+        if not limit_check["can_act"]:
+            validation_result["rejection_reason"] = limit_check["blocking_reason"]
+            
+            # Рассчитываем время следующей возможной попытки
+            if limit_check["blocking_reason"] == "hourly_limit_exceeded":
+                next_hour_start = (int(self.current_time // 60) + 1) * 60
+                validation_result["next_available_time"] = next_hour_start
+            elif limit_check["blocking_reason"] == "daily_limit_exceeded":
+                next_day_start = (int(self.current_time // 1440) + 1) * 1440
+                validation_result["next_available_time"] = next_day_start
+                
+            # Логируем отклонение
+            logger.info(json.dumps({
+                "event": "agent_action_validation_failed",
+                "agent_id": str(agent_id),
+                "action_type": action_type,
+                "rejection_reason": validation_result["rejection_reason"],
+                "next_available_time": validation_result["next_available_time"],
+                "daily_usage": f"{limit_check['daily']['current']}/{limit_check['daily']['limit']}",
+                "hourly_usage": f"{limit_check['hourly']['current']}/{limit_check['hourly']['limit']}",
+                "simulation_time": self.current_time
+            }, default=str))
+        
+        return validation_result
+
+    def _track_action_type(self, action_type: str) -> None:
+        """
+        Отслеживает количество действий по типам для статистики.
+        
+        Args:
+            action_type: Тип действия (Post, Purchase_L1, SelfDev, etc.)
+        """
+        if not hasattr(self, '_action_type_counts'):
+            self._action_type_counts = {}
+            
+        self._action_type_counts[action_type] = self._action_type_counts.get(action_type, 0) + 1
+        
+        logger.debug(json.dumps({
+            "event": "action_type_tracked",
+            "action_type": action_type,
+            "total_count": self._action_type_counts[action_type],
+            "simulation_time": self.current_time
+        }, default=str))
         
     async def _schedule_agent_actions(self) -> int:
         """
@@ -1263,6 +1620,8 @@ class SimulationEngine:
             self._agent_next_action_time = {}
         if not hasattr(self, '_daily_scheduled_events'):
             self._daily_scheduled_events = {}
+        if not hasattr(self, '_action_type_counts'):
+            self._action_type_counts = {}
         
         # Работаем ТОЛЬКО с уже созданными агентами
         eligible_agents = []
@@ -1732,6 +2091,34 @@ class SimulationEngine:
         """
         active_agents = sum(1 for agent in self.agents if agent.energy_level > 0)
         
+        # Подсчитываем статистику действий агентов
+        total_actions = 0
+        total_purchases = 0
+        total_selfdev = 0
+        
+        # Инициализируем счетчики если нужно
+        if not hasattr(self, '_daily_action_counts'):
+            self._daily_action_counts = {}
+        if not hasattr(self, '_action_type_counts'):
+            self._action_type_counts = {}
+        
+        # Подсчитываем общее количество действий за всю симуляцию
+        for key, count in self._daily_action_counts.items():
+            total_actions += count
+        
+        # Подсчитываем действия по типам
+        for action_type, count in self._action_type_counts.items():
+            if action_type.startswith("Purchase"):
+                total_purchases += count
+            elif action_type == "SelfDev":
+                total_selfdev += count
+        
+        # Рассчитываем среднее количество действий на агента в час
+        simulation_hours = max(1, self.current_time / 60.0)  # Минимум 1 час для избежания деления на 0
+        avg_actions_per_agent_per_hour = 0
+        if len(self.agents) > 0:
+            avg_actions_per_agent_per_hour = total_actions / (len(self.agents) * simulation_hours)
+        
         return {
             "simulation_id": str(self.simulation_id) if self.simulation_id else None,
             "current_time": self.current_time,
@@ -1745,7 +2132,13 @@ class SimulationEngine:
                 len(self._aggregated_trends) +
                 len(self._aggregated_trend_creations)
             ),
-            "running": self._running
+            "running": self._running,
+            # Новые метрики активности агентов
+            "total_actions": total_actions,
+            "total_purchases": total_purchases,
+            "total_selfdev": total_selfdev,
+            "avg_actions_per_agent_per_hour": round(avg_actions_per_agent_per_hour, 2),
+            "simulation_hours": round(simulation_hours, 1)
         }
         
     async def shutdown(self) -> None:

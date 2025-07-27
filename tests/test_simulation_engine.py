@@ -222,7 +222,7 @@ async def test_short_simulation_run(mock_db_repo):
     await engine.initialize(num_agents=10)
     
     # Запускаем симуляцию на 60 минут (1/24 дня)
-    await engine.run_simulation(duration_days=60/1440)
+    await engine.run_simulation()
     
     # Проверяем финальную статистику
     stats = engine.get_simulation_stats()
