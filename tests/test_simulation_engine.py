@@ -50,6 +50,40 @@ def mock_db_repo():
     repo.bulk_update_persons = AsyncMock()
     repo.bulk_update_simulation_participants = AsyncMock()
     
+    # Валидные диапазоны профессий из agents_profession_dump.csv
+    repo.get_profession_attribute_ranges.return_value = {
+        "ShopClerk": {"financial_capability": (2, 4), "trend_receptivity": (1, 3), "social_status": (1, 3), "energy_level": (2, 5), "time_budget": (3, 5)},
+        "Worker": {"financial_capability": (2, 4), "trend_receptivity": (1, 3), "social_status": (1, 2), "energy_level": (2, 5), "time_budget": (3, 5)},
+        "Developer": {"financial_capability": (3, 5), "trend_receptivity": (3, 5), "social_status": (2, 4), "energy_level": (2, 5), "time_budget": (2, 4)},
+        "Politician": {"financial_capability": (3, 5), "trend_receptivity": (3, 5), "social_status": (4, 5), "energy_level": (2, 5), "time_budget": (2, 4)},
+        "Blogger": {"financial_capability": (2, 4), "trend_receptivity": (4, 5), "social_status": (3, 5), "energy_level": (2, 5), "time_budget": (3, 5)},
+        "Businessman": {"financial_capability": (4, 5), "trend_receptivity": (2, 4), "social_status": (4, 5), "energy_level": (2, 5), "time_budget": (2, 4)},
+        "SpiritualMentor": {"financial_capability": (1, 3), "trend_receptivity": (2, 5), "social_status": (2, 4), "energy_level": (3, 5), "time_budget": (2, 4)},
+        "Philosopher": {"financial_capability": (1, 3), "trend_receptivity": (1, 3), "social_status": (1, 3), "energy_level": (2, 5), "time_budget": (2, 4)},
+        "Unemployed": {"financial_capability": (1, 2), "trend_receptivity": (3, 5), "social_status": (1, 2), "energy_level": (3, 5), "time_budget": (3, 5)},
+        "Teacher": {"financial_capability": (1, 3), "trend_receptivity": (1, 3), "social_status": (2, 4), "energy_level": (2, 5), "time_budget": (2, 4)},
+        "Artist": {"financial_capability": (1, 3), "trend_receptivity": (2, 4), "social_status": (2, 4), "energy_level": (4, 5), "time_budget": (3, 5)},
+        "Doctor": {"financial_capability": (2, 4), "trend_receptivity": (1, 3), "social_status": (3, 5), "energy_level": (2, 5), "time_budget": (1, 2)},
+    }
+
+    # Заглушка для ReadOnlySession (чтобы не падало на async with)
+    class DummySession:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, exc_type, exc, tb):
+            pass
+        async def execute(self, *args, **kwargs):
+            class DummyResult:
+                def scalars(self):
+                    class DummyScalars:
+                        def all(self):
+                            return []
+                    return DummyScalars()
+                def fetchall(self):
+                    return []
+            return DummyResult()
+    repo.ReadOnlySession = DummySession
+    
     return repo
 
 

@@ -1,0 +1,13 @@
+profession,financial_capability_min,financial_capability_max,trend_receptivity_min,trend_receptivity_max,social_status_min,social_status_max,energy_level_min,energy_level_max,time_budget_min,time_budget_max,created_at
+ShopClerk,2,4,1,3,1,3,2,5,3,5,2025-07-09 17:31:53.206233
+Worker,2,4,1,3,1,2,2,5,3,5,2025-07-09 17:31:53.206239
+Developer,3,5,3,5,2,4,2,5,2,4,2025-07-09 17:31:53.20624
+Politician,3,5,3,5,4,5,2,5,2,4,2025-07-09 17:31:53.206241
+Blogger,2,4,4,5,3,5,2,5,3,5,2025-07-09 17:31:53.206242
+Businessman,4,5,2,4,4,5,2,5,2,4,2025-07-09 17:31:53.206243
+SpiritualMentor,1,3,2,5,2,4,3,5,2,4,2025-07-09 17:31:53.206244
+Philosopher,1,3,1,3,1,3,2,5,2,4,2025-07-09 17:31:53.206245
+Unemployed,1,2,3,5,1,2,3,5,3,5,2025-07-09 17:31:53.206246
+Teacher,1,3,1,3,2,4,2,5,2,4,2025-07-09 17:31:53.206246
+Artist,1,3,2,4,2,4,4,5,3,5,2025-07-09 17:31:53.206247
+Doctor,2,4,1,3,3,5,2,5,1,2,2025-07-09 17:31:53.206248

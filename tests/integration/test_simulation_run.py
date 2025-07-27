@@ -7,7 +7,7 @@ import shutil
 import sys
 
 from src.capsim.main import app
-from scripts import init_db, seed_data
+from scripts import init_db
 
 runner = CliRunner()
 
@@ -35,24 +35,10 @@ def setup_test_database():
     shutil.copy(test_config_path, original_config_path)
     
     print("\n--- Setting up test database ---")
-    try:
-        # Check connection to create DB if not exists
-        conn_params = seed_data.get_db_params()
-        db_name = conn_params.pop('dbname')
-        conn = psycopg2.connect(**conn_params)
-        conn.autocommit = True
-        cur = conn.cursor()
-        cur.execute(f"SELECT 1 FROM pg_database WHERE datname = '{db_name}'")
-        if not cur.fetchone():
-            cur.execute(f"CREATE DATABASE {db_name}")
-            print(f"Database '{db_name}' created.")
-        cur.close()
-        conn.close()
-    except Exception as e:
-        pytest.fail(f"Could not connect to PostgreSQL to set up test database. Is it running? Error: {e}")
+    
 
     init_db.create_tables()
-    seed_data.seed_database()
+    
     print("--- Test database setup complete ---")
 
     yield

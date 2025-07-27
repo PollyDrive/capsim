@@ -80,6 +80,22 @@ class _InMemoryRepo:
     async def increment_trend_interactions(self, *args, **kwargs):
         pass
 
+    async def get_profession_attribute_ranges(self):
+        return {
+            "ShopClerk": {"financial_capability": (2, 4), "trend_receptivity": (1, 3), "social_status": (1, 3), "energy_level": (2, 5), "time_budget": (3, 5)},
+            "Worker": {"financial_capability": (2, 4), "trend_receptivity": (1, 3), "social_status": (1, 2), "energy_level": (2, 5), "time_budget": (3, 5)},
+            "Developer": {"financial_capability": (3, 5), "trend_receptivity": (3, 5), "social_status": (2, 4), "energy_level": (2, 5), "time_budget": (2, 4)},
+            "Politician": {"financial_capability": (3, 5), "trend_receptivity": (3, 5), "social_status": (4, 5), "energy_level": (2, 5), "time_budget": (2, 4)},
+            "Blogger": {"financial_capability": (2, 4), "trend_receptivity": (4, 5), "social_status": (3, 5), "energy_level": (2, 5), "time_budget": (3, 5)},
+            "Businessman": {"financial_capability": (4, 5), "trend_receptivity": (2, 4), "social_status": (4, 5), "energy_level": (2, 5), "time_budget": (2, 4)},
+            "SpiritualMentor": {"financial_capability": (1, 3), "trend_receptivity": (2, 5), "social_status": (2, 4), "energy_level": (3, 5), "time_budget": (2, 4)},
+            "Philosopher": {"financial_capability": (1, 3), "trend_receptivity": (1, 3), "social_status": (1, 3), "energy_level": (2, 5), "time_budget": (2, 4)},
+            "Unemployed": {"financial_capability": (1, 2), "trend_receptivity": (3, 5), "social_status": (1, 2), "energy_level": (3, 5), "time_budget": (3, 5)},
+            "Teacher": {"financial_capability": (1, 3), "trend_receptivity": (1, 3), "social_status": (2, 4), "energy_level": (2, 5), "time_budget": (2, 4)},
+            "Artist": {"financial_capability": (1, 3), "trend_receptivity": (2, 4), "social_status": (2, 4), "energy_level": (4, 5), "time_budget": (3, 5)},
+            "Doctor": {"financial_capability": (2, 4), "trend_receptivity": (1, 3), "social_status": (3, 5), "energy_level": (2, 5), "time_budget": (1, 2)},
+        }
+
 class DemoSimulationEngine(SimulationEngine):
     """SimulationEngine with optional repo argument for tests."""
 
