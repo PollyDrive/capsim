@@ -42,18 +42,14 @@ class TestWorkHoursIntegration:
         human_time = convert_sim_time_to_human(mock_engine.current_time)
         assert human_time == "02:00"
     
+    @pytest.mark.asyncio
     @patch('capsim.engine.simulation_engine.logger')
-    def test_seed_actions_skipped_at_night(self, mock_logger, mock_engine):
+    async def test_seed_actions_skipped_at_night(self, mock_logger, mock_engine):
         """Тест что seed действия пропускаются ночью."""
         from capsim.engine.simulation_engine import SimulationEngine
         
         # Создаем реальный экземпляр для тестирования метода
-        engine = SimulationEngine(
-            simulation_id="test-id",
-            num_agents=1,
-            duration_days=1,
-            db_repo=Mock()
-        )
+        engine = SimulationEngine(db_repo=Mock())
         engine.current_time = 960  # 00:00 - ночь
         engine.agents = [Mock()]  # Один агент
         engine.active_trends = {}
@@ -72,18 +68,14 @@ class TestWorkHoursIntegration:
         assert log_data["reason"] == "night_time"
         assert log_data["human_time"] == "00:00"
     
+    @pytest.mark.asyncio
     @patch('capsim.engine.simulation_engine.logger')
-    def test_uniform_actions_skipped_at_night(self, mock_logger, mock_engine):
+    async def test_uniform_actions_skipped_at_night(self, mock_logger, mock_engine):
         """Тест что uniform действия пропускаются ночью."""
         from capsim.engine.simulation_engine import SimulationEngine
         
         # Создаем реальный экземпляр для тестирования метода
-        engine = SimulationEngine(
-            simulation_id="test-id",
-            num_agents=1,
-            duration_days=1,
-            db_repo=Mock()
-        )
+        engine = SimulationEngine(db_repo=Mock())
         engine.current_time = 1200  # 04:00 - ночь
         engine.end_time = 1440
         engine.agents = [Mock()]
@@ -101,18 +93,14 @@ class TestWorkHoursIntegration:
         assert log_data["reason"] == "night_time"
         assert log_data["human_time"] == "04:00"
     
+    @pytest.mark.asyncio
     @patch('capsim.engine.simulation_engine.logger')
-    def test_agent_actions_skipped_at_night(self, mock_logger, mock_engine):
+    async def test_agent_actions_skipped_at_night(self, mock_logger, mock_engine):
         """Тест что agent действия пропускаются ночью."""
         from capsim.engine.simulation_engine import SimulationEngine
         
         # Создаем реальный экземпляр для тестирования метода
-        engine = SimulationEngine(
-            simulation_id="test-id",
-            num_agents=1,
-            duration_days=1,
-            db_repo=Mock()
-        )
+        engine = SimulationEngine(db_repo=Mock())
         engine.current_time = 1380  # 07:00 - раннее утро, еще ночь
         engine.end_time = 1440
         engine.agents = [Mock()]
@@ -137,12 +125,7 @@ class TestWorkHoursIntegration:
         from capsim.engine.simulation_engine import SimulationEngine
         
         # Создаем реальный экземпляр для тестирования метода
-        engine = SimulationEngine(
-            simulation_id="test-id",
-            num_agents=1,
-            duration_days=1,
-            db_repo=Mock()
-        )
+        engine = SimulationEngine(db_repo=Mock())
         engine.current_time = 960  # 00:00 - полночь
         
         # Создаем тестовый batch
@@ -165,12 +148,7 @@ class TestWorkHoursIntegration:
         from capsim.engine.simulation_engine import SimulationEngine
         
         # Создаем реальный экземпляр для тестирования метода
-        engine = SimulationEngine(
-            simulation_id="test-id",
-            num_agents=1,
-            duration_days=1,
-            db_repo=Mock()
-        )
+        engine = SimulationEngine(db_repo=Mock())
         engine.current_time = 1020  # 01:00 - ночь
         engine.agents = [Mock()]
         
@@ -185,12 +163,7 @@ class TestWorkHoursIntegration:
         from capsim.engine.simulation_engine import SimulationEngine
         
         # Создаем реальный экземпляр для тестирования метода
-        engine = SimulationEngine(
-            simulation_id="test-id",
-            num_agents=1,
-            duration_days=1,
-            db_repo=Mock()
-        )
+        engine = SimulationEngine(db_repo=Mock())
         engine.current_time = 960  # 00:00 - ночь
         engine.end_time = 1440
         engine.event_queue = []
