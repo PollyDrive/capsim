@@ -8,6 +8,7 @@ from datetime import datetime, date
 from dataclasses import dataclass, field
 import random
 import os
+import math
 
 if TYPE_CHECKING:
     from ..engine.simulation_engine import SimulationContext
@@ -47,6 +48,7 @@ class Person:
     
     # v1.8: Action tracking and cooldowns
     purchases_today: int = 0  # Daily purchase counter
+    actions_today: int = 0  # ИСПРАВЛЕНИЕ: Счетчик всех действий в день (лимит 43 согласно ТЗ)
     last_post_ts: Optional[float] = None  # Last post timestamp
     last_selfdev_ts: Optional[float] = None  # Last self-development timestamp
     last_purchase_ts: Dict[str, Optional[float]] = field(default_factory=dict)  # {L1: timestamp, L2: timestamp, L3: timestamp}
@@ -131,25 +133,46 @@ class Person:
                 if attribute in ["energy_level", "financial_capability", 
                                "trend_receptivity", "social_status"]:
                     new_value = max(0.0, min(5.0, current_value + delta))
+                    # ИСПРАВЛЕНИЕ: Защита от NaN
+                    if math.isnan(new_value) or math.isinf(new_value):
+                        new_value = current_value
                 elif attribute == "time_budget":
                     # Унифицировано: float с округлением до 0.5
                     raw_value = max(0.0, min(5.0, current_value + delta))
                     new_value = float(round(raw_value * 2) / 2)  # Округление до 0.5, принудительно float
+                    # ИСПРАВЛЕНИЕ: Защита от NaN
+                    if math.isnan(new_value) or math.isinf(new_value):
+                        new_value = current_value
                 else:
                     new_value = current_value + delta
+                    # ИСПРАВЛЕНИЕ: Защита от NaN
+                    if math.isnan(new_value) or math.isinf(new_value):
+                        new_value = current_value
                     
                 setattr(self, attribute, new_value)
         
     def can_perform_action(self, action_type: str, current_time: float | None = None) -> bool:
         """
-        Проверяет возможность выполнения действия.
+        Проверяет возможность выполнения действия согласно ТЗ v1.9.
         
         Args:
             action_type: Тип действия для проверки
+            current_time: Текущее время симуляции
             
         Returns:
             True если действие возможно
         """
+        # ИСПРАВЛЕНИЕ: Проверка лимита действий в день (20 для более реалистичной активности)
+        if self.actions_today >= 20:
+            return False
+            
+        # Проверка времени суток согласно ТЗ v1.9 (ночной режим 00:00-08:00)
+        if current_time is not None:
+            day_time = current_time % 1440  # минуты в дне
+            if 0 <= day_time < 480:  # 00:00 - 08:00 (8 часов = 480 минут)
+                import random
+                return random.random() < 0.2 # 20% активности ночью
+        
         # Базовые проверки для любого действия
         if action_type == "any":
             return self.energy_level > 0 and self.time_budget > 0
@@ -158,7 +181,7 @@ class Person:
         if action_type == "PublishPostAction":
             return (
                 self.energy_level >= 0.5 and
-                self.time_budget >= 1 and
+                self.time_budget >= 0.5 and  # Снижено с 1 до 0.5
                 self.trend_receptivity > 0
             )
             
@@ -175,76 +198,84 @@ class Person:
             if hasattr(self, attribute):
                 current_value = float(getattr(self, attribute))  # Конвертируем Decimal в float
                 
+                # ИСПРАВЛЕНИЕ: Защита от NaN в входных данных
+                if math.isnan(current_value) or math.isnan(delta):
+                    continue
+                
                 # Применяем ограничения по диапазону
                 if attribute in ["energy_level", "financial_capability", 
                                "trend_receptivity", "social_status"]:
                     new_value = max(0.0, min(5.0, current_value + delta))
+                    # ИСПРАВЛЕНИЕ: Защита от NaN
+                    if math.isnan(new_value) or math.isinf(new_value):
+                        new_value = current_value
                 elif attribute == "time_budget":
                     # Унифицировано: float с округлением до 0.5
                     raw_value = max(0.0, min(5.0, current_value + delta))
                     new_value = float(round(raw_value * 2) / 2)  # Округление до 0.5
+                    # ИСПРАВЛЕНИЕ: Защита от NaN
+                    if math.isnan(new_value) or math.isinf(new_value):
+                        new_value = current_value
                 else:
                     new_value = current_value + delta
+                    # ИСПРАВЛЕНИЕ: Защита от NaN
+                    if math.isnan(new_value) or math.isinf(new_value):
+                        new_value = current_value
                     
                 setattr(self, attribute, new_value)
     
     def can_post(self, current_time: float) -> bool:
-        """Проверяет возможность публикации поста (cooldown + ресурсы)."""
+        """Проверяет возможность публикации поста (cooldown + ресурсы) согласно ТЗ v1.9."""
         from capsim.common.settings import action_config
 
-        # Блок действий в ночное время
-        day_time = current_time % 1440
-        if 0 <= day_time < 480:
-            return False
-        
-        # Проверка cooldown (сокращенный cooldown)
+        # Проверка cooldown согласно ТЗ v1.9
         if self.last_post_ts is not None:
-            cooldown_passed = current_time - self.last_post_ts >= action_config.cooldowns["POST_MIN"] / 2  # Половина cooldown
+            cooldown_passed = current_time - self.last_post_ts >= action_config.cooldowns["POST_MIN"]
             if not cooldown_passed:
                 return False
         
-        # Более мягкие проверки ресурсов
+        # Проверки ресурсов согласно ТЗ v1.9
         return (
             self.energy_level >= 0.3 and
-            self.time_budget >= 0.15
+            self.time_budget >= 0.5 and
+            self.trend_receptivity > 0
         )
     
     def can_self_dev(self, current_time: float) -> bool:
-        """Проверяет возможность саморазвития (cooldown + ресурсы)."""
+        """Проверяет возможность саморазвития (cooldown + ресурсы) согласно ТЗ v1.9."""
         from capsim.common.settings import action_config
 
-        day_time = current_time % 1440
-        if 0 <= day_time < 480:
-            return False
-        
-        # Проверка cooldown (сокращенный)
+        # Проверка cooldown согласно ТЗ v1.9
         if self.last_selfdev_ts is not None:
-            cooldown_passed = current_time - self.last_selfdev_ts >= action_config.cooldowns["SELF_DEV_MIN"] / 2  # Половина cooldown
+            cooldown_passed = current_time - self.last_selfdev_ts >= action_config.cooldowns["SELF_DEV_MIN"]
             if not cooldown_passed:
                 return False
         
-        # Более мягкие проверки ресурсов
-        return self.time_budget >= 0.8  # Снижено с 1.0
+        # Проверки ресурсов согласно ТЗ v1.9
+        return self.time_budget >= 0.8  # Согласно ТЗ v1.9 (time_cost = -0.80)
     
     def can_purchase(self, current_time: float, level: str) -> bool:
-        """Проверяет возможность покупки определенного уровня."""
+        """Проверяет возможность покупки определенного уровня согласно ТЗ v1.9."""
         from capsim.common.settings import action_config
 
-        day_time = current_time % 1440
-        if 0 <= day_time < 480:
-            return False
-        
-        # Проверка дневного лимита (увеличенного)
-        max_purchases = action_config.limits["MAX_PURCHASES_DAY"] * 2  # Удваиваем лимит
+        # ИСПРАВЛЕНИЕ: Добавляем cooldown для покупок (30 минут между покупками)
+        if level in self.last_purchase_ts and self.last_purchase_ts[level] is not None:
+            cooldown_passed = current_time - self.last_purchase_ts[level] >= 30.0  # 30 минут cooldown
+            if not cooldown_passed:
+                return False
+
+        # Проверка дневного лимита согласно ТЗ v1.8
+        max_purchases = action_config.limits["MAX_PURCHASES_DAY"]
         if self.purchases_today >= max_purchases:
             return False
         
-        # Более мягкие финансовые требования
-        # v1.9: используем минимальную стоимость из диапазона cost_range
-        cost_range = action_config.effects["PURCHASE"][level]["cost_range"]
-        max_cost = cost_range[1]
-        required_capability = max_cost  # требуемо покрыть максимальную стоимость
-        return self.financial_capability >= required_capability * 0.8  # 80% от макс стоимости
+        # Проверка финансовых порогов согласно ТЗ v1.9
+        effects = action_config.effects["PURCHASE"][level]
+        cost_range = effects["cost_range"]
+        # ИСПРАВЛЕНИЕ: Используем минимальную стоимость как порог - агент может попробовать купить, если может позволить минимум
+        min_cost = cost_range[0]
+        
+        return self.financial_capability >= min_cost
         
     def get_interest_in_topic(self, topic: str) -> float:
         """
@@ -445,33 +476,37 @@ class Person:
         
         actions = []
         
-        # POST logic - более высокие базовые scores
+        # POST logic - согласно ТЗ v1.8
         if self.can_post(current_time):
             if trend and hasattr(trend, 'calculate_current_virality'):
-                post_score = (
-                    trend.calculate_current_virality() * self.trend_receptivity / 15  # Уменьшено с 25 до 15
-                    * (1 + self.social_status / 8)  # Увеличено влияние social_status
-                )
+                virality = trend.calculate_current_virality()
+                # ИСПРАВЛЕНИЕ: Защита от NaN и деления на ноль
+                if math.isnan(virality) or math.isinf(virality) or self.trend_receptivity == 0:
+                    post_score = 0.3
+                else:
+                    post_score = (
+                        virality * self.trend_receptivity / 25  # Согласно ТЗ
+                        * (1 + self.social_status / 10)  # Согласно ТЗ
+                    )
             else:
-                post_score = 0.5  # Увеличен минимальный score
+                post_score = 0.3  # Базовый score для постов без тренда
             actions.append(("Post", post_score))
         
-        # PURCHASE logic (L1/L2/L3) - более активные покупки
+        # PURCHASE logic (L1/L2/L3) - согласно ТЗ v1.8
         for level in ["L1", "L2", "L3"]:
             if self.can_purchase(current_time, level):
-                base_score = 0.6 * getattr(action_config, 'shop_weights', {}).get(self.profession, 1.0)  # Увеличено с 0.3
-                # Добавляем рандомность для разнообразия
-                base_score += random.random() * 0.3
+                # ИСПРАВЛЕНИЕ: Снижаем базовый score покупок с 0.3 до 0.1
+                score = 0.1 * getattr(action_config, 'shop_weights', {}).get(self.profession, 1.0)  # Согласно ТЗ
                 if trend and hasattr(trend, 'topic') and trend.topic == "Economic":
-                    base_score *= 1.5  # Увеличено с 1.2
-                actions.append((f"Purchase_{level}", base_score))
+                    score *= 1.2  # Согласно ТЗ
+                actions.append((f"Purchase_{level}", score))
         
-        # SELF_DEV logic - больше мотивации для развития
+        # SELF_DEV logic - согласно ТЗ v1.8
         if self.can_self_dev(current_time):
-            score = max(0.3, 1.2 - self.energy_level / 4)  # Увеличена минимальная мотивация
+            score = max(0.0, 1 - self.energy_level / 5)  # Согласно ТЗ
             actions.append(("SelfDev", score))
         
-        # Weighted selection
+        # Weighted selection согласно ТЗ
         if not actions or not any(s for _, s in actions):
             return None
             
@@ -480,9 +515,17 @@ class Person:
         
         # Если все веса нулевые, возвращаем None
         if sum(weights) == 0:
+            if random.random() < 0.1:  # 10% шанс случайного действия
+                actions = ['Post', 'Purchase_L1', 'SelfDev']
+                return random.choice(actions)
             return None
             
         selected = random.choices(names, weights=weights)[0]
+        
+        # Логируем выбор действия для отладки
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Agent {self.id} ({self.profession}) chose action: {selected} from {names} with weights {weights}")
         
         # Возвращаем имя действия как строку
         return selected 

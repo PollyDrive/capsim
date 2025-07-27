@@ -375,6 +375,56 @@ class DatabaseRepository:
             )
             return result.scalars().all()
             
+    async def get_latest_agent_attributes(self, person_ids: List[UUID]) -> Dict[UUID, Dict[str, float]]:
+        """
+        Получает последние значения атрибутов агентов из person_attribute_history.
+        
+        Args:
+            person_ids: Список ID агентов
+            
+        Returns:
+            Словарь {person_id: {attribute_name: latest_value}}
+        """
+        if not person_ids:
+            return {}
+            
+        async with self.ReadOnlySession() as session:
+            # Получаем последние значения атрибутов для каждого агента
+            query = text("""
+                WITH latest_attributes AS (
+                    SELECT 
+                        person_id,
+                        attribute_name,
+                        new_value,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY person_id, attribute_name 
+                            ORDER BY change_timestamp DESC, created_at DESC
+                        ) as rn
+                    FROM capsim.person_attribute_history
+                    WHERE person_id = ANY(:person_ids)
+                )
+                SELECT person_id, attribute_name, new_value
+                FROM latest_attributes
+                WHERE rn = 1
+            """)
+            
+            result = await session.execute(query, {"person_ids": person_ids})
+            rows = result.fetchall()
+            
+            # Группируем результаты по person_id
+            attributes_by_person = {}
+            for row in rows:
+                person_id = row[0]
+                attribute_name = row[1]
+                new_value = row[2]
+                
+                if person_id not in attributes_by_person:
+                    attributes_by_person[person_id] = {}
+                    
+                attributes_by_person[person_id][attribute_name] = new_value
+                
+            return attributes_by_person
+            
     async def get_person(self, person_id: UUID) -> Optional[Person]:
         """Get person by ID."""
         async with self.ReadOnlySession() as session:
@@ -425,17 +475,18 @@ class DatabaseRepository:
                     logger.error(f"Bulk create trends failed: {e}")
                     # Не пробрасываем ошибку, чтобы не прерывать симуляцию из-за дублей
                 
-    async def bulk_increment_trend_interactions(self, trend_ids: List[UUID]) -> None:
-        """Bulk-инкремент взаимодействий для трендов."""
-        if not trend_ids:
+    async def bulk_increment_trend_interactions(self, trend_counts: List[Tuple[UUID, int]]) -> None:
+        """Bulk-инкремент взаимодействий для трендов с учетом количества для каждого тренда."""
+        if not trend_counts:
             return
         async with self.SessionLocal() as session:
             try:
-                await session.execute(
-                    update(Trend)
-                    .where(Trend.trend_id.in_(trend_ids))
-                    .values(interaction_count=Trend.interaction_count + 1)
-                )
+                for trend_id, count in trend_counts:
+                    # ИСПРАВЛЕНИЕ: Используем правильный SQL синтаксис для инкремента с указанием схемы
+                    await session.execute(
+                        text("UPDATE capsim.trends SET total_interactions = total_interactions + :count WHERE trend_id = :trend_id")
+                        .bindparams(count=count, trend_id=trend_id)
+                    )
                 await session.commit()
             except SQLAlchemyError as e:
                 await session.rollback()
@@ -492,8 +543,35 @@ class DatabaseRepository:
         """Bulk-создание новых событий."""
         if not events_data:
             return
-        async with self.SessionLocal.begin() as session:
-            await session.execute(insert(Event), events_data)
+        
+        from ..db.models import Event as DBEvent
+        
+        async with self.SessionLocal() as session:
+            # Создаем объекты Event из данных
+            db_events = []
+            for event_data in events_data:
+                # Очищаем данные от служебных полей
+                cleaned_data = event_data.copy()
+                cleaned_data.pop("type", None)
+                
+                # Конвертируем processed_at обратно в datetime
+                if "processed_at" in cleaned_data and isinstance(cleaned_data["processed_at"], str):
+                    cleaned_data["processed_at"] = datetime.fromisoformat(cleaned_data["processed_at"].replace("Z", "+00:00"))
+                
+                # Конвертируем UUID строки обратно в UUID объекты
+                if "simulation_id" in cleaned_data and isinstance(cleaned_data["simulation_id"], str):
+                    cleaned_data["simulation_id"] = UUID(cleaned_data["simulation_id"])
+                if "agent_id" in cleaned_data and cleaned_data["agent_id"] and isinstance(cleaned_data["agent_id"], str):
+                    cleaned_data["agent_id"] = UUID(cleaned_data["agent_id"])
+                if "trend_id" in cleaned_data and cleaned_data["trend_id"] and isinstance(cleaned_data["trend_id"], str):
+                    cleaned_data["trend_id"] = UUID(cleaned_data["trend_id"])
+                
+                db_event = DBEvent(**cleaned_data)
+                db_events.append(db_event)
+            
+            # Добавляем все события в сессию
+            session.add_all(db_events)
+            await session.commit()
             
     # Affinity and interests operations
     async def load_affinity_map(self) -> Dict[str, Dict[str, float]]:
@@ -569,15 +647,26 @@ class DatabaseRepository:
         """Bulk update Person records."""
         if not updates:
             return
-        async with self.SessionLocal().begin() as session: # Используем транзакцию
-            await session.execute(update(Person), updates)
+        async with self.SessionLocal() as session:
+            for update_data in updates:
+                stmt = update(Person).where(Person.id == update_data['id']).values(**{k: v for k, v in update_data.items() if k != 'id'})
+                await session.execute(stmt)
+            await session.commit()
             
     async def bulk_update_simulation_participants(self, updates: List[Dict[str, Any]]) -> None:
         """Bulk update SimulationParticipant records."""
         if not updates:
             return
-        async with self.SessionLocal().begin() as session: # Используем транзакцию
-            await session.execute(update(SimulationParticipant), updates)
+        async with self.SessionLocal() as session:
+            for update_data in updates:
+                simulation_id = update_data['simulation_id']
+                person_id = update_data['person_id']
+                stmt = update(SimulationParticipant).where(
+                    SimulationParticipant.simulation_id == simulation_id,
+                    SimulationParticipant.person_id == person_id
+                ).values(**{k: v for k, v in update_data.items() if k not in ['simulation_id', 'person_id']})
+                await session.execute(stmt)
+            await session.commit()
             
     async def batch_commit_states(self, updates: List[Dict[str, Any]]) -> None:
         """

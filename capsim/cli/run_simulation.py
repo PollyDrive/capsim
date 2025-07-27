@@ -80,7 +80,7 @@ async def run_simulation_cli(
         engine = SimulationEngine(db_repo)
         
         print("\n🔄 Инициализация симуляции...")
-        await engine.initialize(num_agents=num_agents)
+        await engine.initialize(num_agents=num_agents, duration_days=duration_days)
         
         print(f"✅ Создано агентов: {len(engine.agents)}")
         print(f"✅ Системных событий: {len(engine.event_queue)}")
@@ -89,7 +89,7 @@ async def run_simulation_cli(
         print(f"\n▶️  Запуск симуляции на {duration_days} дней...")
         
         # Запускаем симуляцию
-        await engine.run_simulation(duration_days=duration_days)
+        await engine.run_simulation()
         
         # Финальная статистика
         final_stats = engine.get_simulation_stats()

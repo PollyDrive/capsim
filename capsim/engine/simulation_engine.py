@@ -16,8 +16,8 @@ from dataclasses import dataclass, field
 from ..domain.person import Person
 from ..domain.trend import Trend
 from ..domain.events import (
-    BaseEvent, EventPriority, PublishPostAction, EnergyRecoveryEvent, 
-    DailyResetEvent, SaveDailyTrendEvent
+    BaseEvent, EventPriority, PublishPostAction, PurchaseAction, SelfDevAction,
+    EnergyRecoveryEvent, DailyResetEvent, SaveDailyTrendEvent
 )
 from ..common.clock import Clock, create_clock
 from ..common.settings import settings
@@ -120,20 +120,19 @@ class SimulationEngine:
             if not hasattr(self.db_repo, _name):
                 setattr(self.db_repo, _name, _noop)
         
-    async def initialize(self, num_agents: int = 1000) -> None:
+    async def initialize(self, num_agents: int = 1000, duration_days: float = 1.0) -> None:
         """
         Инициализирует симуляцию с заданным количеством агентов.
         
-        ВАЖНО: 
-        1. Агенты создаются ТОЛЬКО если их недостаточно для симуляции
-        2. Глобальный лимит 1000 агентов НЕ должен превышаться
-        3. Распределение профессий строго согласно ТЗ
-        
         Args:
             num_agents: Количество агентов для симуляции
+            duration_days: Продолжительность симуляции в днях
         """
         if self.simulation_id:
             raise RuntimeError("Simulation already initialized")
+
+        # Устанавливаем время окончания симуляции
+        self.end_time = duration_days * 1440.0
             
         self._last_batch_commit = time.time()
         self._agent_action_cooldowns = {}
@@ -145,7 +144,7 @@ class SimulationEngine:
         # Создать запись о симуляции
         simulation_run = await self.db_repo.create_simulation_run(
             num_agents=num_agents,
-            duration_days=1,  # Базовое значение, будет обновлено при запуске
+            duration_days=duration_days,
             configuration={
                 "realtime_mode": settings.ENABLE_REALTIME,
                 "speed_factor": settings.SIM_SPEED_FACTOR,
@@ -197,24 +196,37 @@ class SimulationEngine:
             # Преобразуем SQLAlchemy модели Person → доменные объекты Person для движка
             from ..domain.person import Person as DomainPerson  # локальный импорт, чтобы избежать циклов
 
+            # Получаем последние атрибуты агентов из истории
+            person_ids = [p.id for p in db_persons[:num_agents]]
+            latest_attributes = await self.db_repo.get_latest_agent_attributes(person_ids)
+
             converted: list[DomainPerson] = []
             for p in db_persons[:num_agents]:
-                converted.append(DomainPerson(
-                    id=p.id,
-                    profession=p.profession,
-                    first_name=p.first_name,
-                    last_name=p.last_name,
-                    gender=p.gender,
-                    date_of_birth=p.date_of_birth,
-                    financial_capability=p.financial_capability,
-                    trend_receptivity=p.trend_receptivity,
-                    social_status=p.social_status,
-                    energy_level=p.energy_level,
-                    time_budget=float(p.time_budget),
-                    exposure_history=p.exposure_history or {},
-                    interests=p.interests or {},
-                    simulation_id=self.simulation_id
-                ))
+                # Базовые атрибуты из persons
+                agent_attrs = {
+                    'id': p.id,
+                    'profession': p.profession,
+                    'first_name': p.first_name,
+                    'last_name': p.last_name,
+                    'gender': p.gender,
+                    'date_of_birth': p.date_of_birth,
+                    'financial_capability': p.financial_capability,
+                    'trend_receptivity': p.trend_receptivity,
+                    'social_status': p.social_status,
+                    'energy_level': p.energy_level,
+                    'time_budget': float(p.time_budget),
+                    'exposure_history': p.exposure_history or {},
+                    'interests': p.interests or {},
+                    'simulation_id': self.simulation_id
+                }
+                
+                # Применяем последние значения из истории, если они есть
+                if p.id in latest_attributes:
+                    for attr_name, latest_value in latest_attributes[p.id].items():
+                        if attr_name in ['financial_capability', 'trend_receptivity', 'social_status', 'energy_level', 'time_budget']:
+                            agent_attrs[attr_name] = latest_value
+                
+                converted.append(DomainPerson(**agent_attrs))
 
             self.agents = converted
             
@@ -281,6 +293,15 @@ class SimulationEngine:
                             "total_count": len(self.agents),
                             "requested_count": num_agents
                         }, default=str))
+                        # ИСПРАВЛЕНИЕ: НЕ сбрасываем атрибуты агентов при реюзе
+                        # Агенты сохраняют свои атрибуты из истории между симуляциями
+                        # Сбрасываем только cooldown'ы и счетчики
+                        for agent in self.agents:
+                            agent.purchases_today = 0  # Сброс счетчика покупок
+                            agent.last_post_ts = None  # Сброс cooldown'ов
+                            agent.last_selfdev_ts = None
+                            agent.last_purchase_ts = {}
+                        
                         # self.agents уже содержит нужное число; пропускаем создание
                     else:
                         # СТРОГОЕ РАСПРЕДЕЛЕНИЕ ПРОФЕССИЙ согласно ТЗ (таблица распределения)
@@ -390,74 +411,84 @@ class SimulationEngine:
         logger.info(json.dumps({
             "event": "simulation_initialized",
             "simulation_id": str(self.simulation_id),
+            "duration_days": duration_days,
+            "end_time_minutes": self.end_time,
             "agents_total": len(self.agents),
             "affinity_topics": len(self.affinity_map),
             "system_events_scheduled": len(self.event_queue)
         }, default=str))
         
     def _schedule_system_events(self) -> None:
-        """Планирует системные события."""
-        # ИСПРАВЛЕНИЕ: Создаем больше системных событий для полноценной симуляции
-        
-        # ИСПРАВЛЕНИЕ: Убираем автоматическое восстановление энергии, чтобы оно не мешало агентам
-        # Восстановление энергии будет происходить только через MorningRecoveryEvent
-        
-        # Ежедневный сброс через 24 часа (1440 минут)
-        daily_reset = DailyResetEvent(1440.0)
-        self.add_event(daily_reset, EventPriority.SYSTEM, 1440.0)
-        
-        # Сохранение дневной статистики через 23 часа (1380 минут)
-        daily_save = SaveDailyTrendEvent(1380.0)
-        self.add_event(daily_save, EventPriority.SYSTEM, 1380.0)
-        
-        # v1.9: суточный цикл — ночь в 00:00, восстановление в 08:00
-        from capsim.domain.events import NightCycleEvent, MorningRecoveryEvent
-        night_event = NightCycleEvent(1440.0)  # 24 часа после старта = 00:00 второго дня
-        morning_event = MorningRecoveryEvent(1920.0)  # 32 часа после старта = 08:00 второго дня
-        self.add_event(night_event, EventPriority.SYSTEM, night_event.timestamp)
-        self.add_event(morning_event, EventPriority.SYSTEM, morning_event.timestamp)
-        
-        # v1.9: ИСПРАВЛЕНИЕ - убираем пассивное восстановление энергии каждые 5 минут
-        # Восстановление энергии происходит только утром через MorningRecoveryEvent
+        """Планирует системные события на весь период симуляции."""
+        if self.end_time is None:
+            return
+
+        from capsim.domain.events import NightCycleEvent, MorningRecoveryEvent, DailyResetEvent, SaveDailyTrendEvent
+
         logger.info(json.dumps({
-            "event": "system_events_scheduled",
-            "events": ["DailyResetEvent", "SaveDailyTrendEvent", "NightCycleEvent", "MorningRecoveryEvent"],
-            "note": "EnergyRecoveryEvent disabled per v1.9 spec"
+            "event": "scheduling_system_events_for_duration",
+            "end_time": self.end_time,
         }, default=str))
+
+        # Планируем события на каждый день симуляции
+        for day in range(int(self.end_time // 1440) + 1):
+            day_start_time = day * 1440.0
+
+            # 00:00 - NightCycleEvent (кроме первого дня, т.к. он уже идет)
+            if day > 0:
+                night_event_time = day_start_time
+                if night_event_time < self.end_time:
+                    self.add_event(NightCycleEvent(night_event_time), EventPriority.SYSTEM, night_event_time)
+
+            # 08:00 - MorningRecoveryEvent
+            morning_event_time = day_start_time + 8 * 60
+            if morning_event_time < self.end_time:
+                self.add_event(MorningRecoveryEvent(morning_event_time), EventPriority.SYSTEM, morning_event_time)
+
+            # Добавляем EnergyRecoveryEvent каждые 3 минуты для коротких симуляций
+            # ИСПРАВЛЕНИЕ: Планируем только события в будущем относительно текущего времени
+            # И только если день еще не начался (day_start_time > self.current_time)
+            if day_start_time > self.current_time:
+                for minute in range(0, min(1440, int(self.end_time - day_start_time)), 20):
+                    energy_event_time = day_start_time + minute
+                    # Планируем только события в будущем и в пределах времени симуляции
+                    if energy_event_time < self.end_time:
+                        from capsim.domain.events import EnergyRecoveryEvent
+                        self.add_event(EnergyRecoveryEvent(energy_event_time), EventPriority.ENERGY_RECOVERY, energy_event_time)
+
+            # 23:00 - SaveDailyTrendEvent
+            save_event_time = day_start_time + 23 * 60
+            if save_event_time < self.end_time:
+                self.add_event(SaveDailyTrendEvent(save_event_time), EventPriority.SYSTEM, save_event_time)
+
+            # 24:00 (00:00 следующего дня) - DailyResetEvent
+            reset_event_time = day_start_time + 24 * 60
+            if reset_event_time < self.end_time:
+                self.add_event(DailyResetEvent(reset_event_time), EventPriority.SYSTEM, reset_event_time)
         
-    async def run_simulation(self, duration_days: float = 1.0) -> None:
+    async def run_simulation(self) -> None:
         """
-        Запускает основной цикл симуляции.
-        
-        Args:
-            duration_days: Продолжительность симуляции в днях
+        Запускает главный цикл симуляции.
         """
-        if not self.simulation_id:
+        if not self.simulation_id or self.end_time is None:
             raise RuntimeError("Simulation not initialized. Call initialize() first.")
             
         self._running = True
-        self.end_time = duration_days * 1440.0  # Конвертируем дни в минуты
-        end_time = self.end_time  # Для обратной совместимости с существующим кодом
+        end_time = self.end_time
         self._simulation_start_real = time.time()
         
         logger.info(json.dumps({
             "event": "simulation_started",
             "simulation_id": str(self.simulation_id),
-            "duration_days": duration_days,
             "end_time": end_time,
             "agents_count": len(self.agents),
             "realtime_mode": settings.ENABLE_REALTIME,
             "speed_factor": settings.SIM_SPEED_FACTOR
         }, default=str))
         
-        events_processed = 0
         agent_actions_scheduled = 0
         
-        # Логируем начальное состояние очереди
-        # Временно отключаем логирование очереди событий из-за проблем с UUID
-        # self._log_event_queue_status()
-        
-        # ИСПРАВЛЕНИЕ: Планируем начальные действия агентов для заполнения очереди
+        # Планируем начальные действия агентов
         initial_scheduled = await self._schedule_seed_actions()
         agent_actions_scheduled += initial_scheduled
         
@@ -470,91 +501,62 @@ class SimulationEngine:
         try:
             last_time_update = self.current_time
             stagnation_counter = 0
-            
+
+            # ИСПРАВЛЕНИЕ: Основной цикл должен завершаться по времени симуляции
             while self._running and self.current_time < end_time:
+
+                # Если очередь пуста, завершаем симуляцию
+                if not self.event_queue:
+                    logger.info(json.dumps({
+                        "event": "event_queue_empty",
+                        "simulation_time": self.current_time,
+                        "target_end_time": end_time,
+                        "msg": "Simulation finished - no more events."
+                    }, default=str))
+                    break
+
+                # Получаем следующее событие
                 priority_event = heapq.heappop(self.event_queue)
                 event_timestamp = priority_event.timestamp
 
-                if settings.ENABLE_REALTIME and self.current_time > 0:
-                    sim_time_delta = event_timestamp - self.current_time
-                    if sim_time_delta > 0:
-                        sleep_duration = (sim_time_delta * 60) / settings.SIM_SPEED_FACTOR
-                        await asyncio.sleep(sleep_duration)
-
                 # Проверяем, не вышли ли мы за пределы времени симуляции
                 if event_timestamp > end_time:
-                    # Возвращаем событие в очередь, так как оно не должно быть обработано
-                    heapq.heappush(self.event_queue, priority_event)
                     logger.info(json.dumps({
-                        "event": "simulation_ending_event_time_limit",
-                        "current_time": self.current_time,
-                        "next_event_time": priority_event.timestamp,
-                        "end_time": end_time,
-                        "events_processed": events_processed,
-                        "queue_size": len(self.event_queue)
+                        "event": "simulation_time_limit_reached",
+                        "simulation_time": self.current_time,
+                        "target_end_time": end_time,
+                        "next_event_time": event_timestamp,
+                        "queue_size_remaining": len(self.event_queue),
+                        "msg": "Simulation finished - time limit reached."
                     }, default=str))
+                    # Возвращаем событие в очередь и завершаем
+                    heapq.heappush(self.event_queue, priority_event)
                     break
-                    
-                    # ИСПРАВЛЕНИЕ: Защита от зависания времени - принудительно продвигаем время
-                if priority_event.timestamp == self.current_time:
-                    stagnation_counter += 1
-                    if stagnation_counter > 100:  # Если обрабатываем более 100 событий с одинаковым временем
-                        logger.warning(json.dumps({
-                            "event": "time_stagnation_detected",
-                            "current_time": self.current_time,
-                            "stagnation_counter": stagnation_counter,
-                            "forcing_time_advance": True
-                        }, default=str))
-                        # Принудительно продвигаем время на 0.1 минуты
-                        self.current_time += 0.1
-                        stagnation_counter = 0
-                else:
-                    stagnation_counter = 0
-                    
-                    # Конвертировать sim_time в real_time для realtime режима
-                if priority_event.event.timestamp_real is None:
-                    priority_event.event.timestamp_real = (
-                        self._simulation_start_real + 
-                        priority_event.timestamp * 60.0 / settings.SIM_SPEED_FACTOR
-                    )
-                    
-                    # Ожидание до времени события в realtime режиме
-                if settings.ENABLE_REALTIME:
-                    await self.clock.sleep_until(priority_event.timestamp)
-                    
-                self.current_time = priority_event.timestamp
-                    
-                    # Обработать событие
+
+                # --- ИСПРАВЛЕНИЕ ЛОГИКИ СКОРОСТИ ---
+                if settings.ENABLE_REALTIME or settings.SIM_SPEED_FACTOR > 1.0:
+                    sim_time_delta = event_timestamp - self.current_time
+                    if sim_time_delta > 0:
+                        # Конвертируем минуты симуляции в реальные секунды для паузы
+                        sleep_duration = (sim_time_delta * 60) / settings.SIM_SPEED_FACTOR
+                        # Ограничиваем максимальную паузу 1 секундой
+                        sleep_duration = min(sleep_duration, 1.0)
+                        await asyncio.sleep(sleep_duration)
+
+                # Теперь, после паузы, продвигаем время симуляции
+                self.current_time = event_timestamp
+                
                 await self._process_event(priority_event.event)
-                events_processed += 1
-                    
-                                    # Проверить batch commit
-                # ИСПРАВЛЕНИЕ: Используем агрегированные обновления для оптимизации
+                
+                # Проверить batch commit
                 if self._should_commit_batch():
                     await self._batch_commit_states()
                 
                 # Запланировать новые действия агентов после каждого события
-                # ИСПРАВЛЕНИЕ: Не планируем новые действия если близко к времени окончания
-                if (events_processed % 5 == 0 and  # Каждые 5 событий планируем действия агентов
-                    self.current_time < (self.end_time - 60.0)):  # Останавливаем планирование за 60 минут до конца
+                # ИСПРАВЛЕНИЕ: Планируем новые действия каждые 10 минут симуляции для достижения активности
+                if int(self.current_time) % 10 == 0 and int(self.current_time) > 0:
                     scheduled = await self._schedule_agent_actions()
                     agent_actions_scheduled += scheduled
-                    # Логируем состояние очереди каждые 50 событий
-                    # self._log_event_queue_status()
-                
-                # Если очередь пуста, завершаем симуляцию
-                if not self.event_queue:
-                    logger.info(json.dumps({
-                        "event": "simulation_ending_empty_queue",
-                        "current_time": self.current_time,
-                        "end_time": end_time,
-                        "events_processed": events_processed
-                    }, default=str))
-                    break
-                
-                # Минимальная пауза для cooperative multitasking
-                # ИСПРАВЛЕНИЕ: Убираем паузу для максимальной скорости симуляции
-                # await asyncio.sleep(0.01 if not settings.ENABLE_REALTIME else 0.1 / max(1.0, settings.SIM_SPEED_FACTOR))
                 
         except Exception as e:
             logger.error(json.dumps({
@@ -579,29 +581,23 @@ class SimulationEngine:
             }, default=str))
             await self._batch_commit_states()
             
-            # ИСПРАВЛЕНИЕ: Обновить статус симуляции на COMPLETED с end_time
-            await self.db_repo.update_simulation_status(
-                self.simulation_id, 
-                "COMPLETED",
-                datetime.utcnow()
-            )
+            if self.simulation_id:
+                await self.db_repo.update_simulation_status(
+                    self.simulation_id, 
+                    "COMPLETED",
+                    datetime.utcnow()
+                )
             
             logger.info(json.dumps({
-                "event": "simulation_completed",
+                "event": "simulation_finished",
                 "simulation_id": str(self.simulation_id),
-                "duration_minutes": self.current_time,
-                "events_processed": events_processed,
-                "agent_actions_scheduled": agent_actions_scheduled,
-                "final_agents": len(self.agents),
-                "final_trends": len(self.active_trends)
+                "final_sim_time": self.current_time,
+                "real_duration_sec": time.time() - self._simulation_start_real
             }, default=str))
-        
+
     async def _process_event(self, event: BaseEvent) -> None:
         """
-        Обрабатывает одно событие из очереди.
-        
-        Args:
-            event: Событие для обработки
+        Обрабатывает одно событие и обновляет состояние симуляции.
         """
         start_time = datetime.utcnow()
         
@@ -637,21 +633,21 @@ class SimulationEngine:
                         "event_type": event.__class__.__name__,
                         "timestamp": event.timestamp
                     }, default=str))
-                    trend_id = None  # Не сохраняем ссылку на несуществующий тренд
+                    # Не сохраняем событие, если тренд не найден
+                    return
                 
             # Системные события НЕ имеют agent_id или trend_id
             # (EnergyRecoveryEvent, DailyResetEvent, SaveDailyTrendEvent)
             
-            # Записать событие в БД ВСЕГДА после обработки
-            from ..db.models import Event as DBEvent
-            db_event = DBEvent(
-                simulation_id=self.simulation_id,
-                event_type=event.__class__.__name__,
-                priority=event.priority,
-                timestamp=event.timestamp,
-                agent_id=agent_id,  # NULL для системных событий
-                trend_id=trend_id,  # NULL если не связано с трендом
-                event_data={
+            # Добавляем событие в batch для сохранения в БД
+            event_data = {
+                "simulation_id": self.simulation_id,
+                "event_type": event.__class__.__name__,
+                "priority": event.priority,
+                "timestamp": event.timestamp,
+                "agent_id": agent_id,  # NULL для системных событий
+                "trend_id": trend_id,  # NULL если не связано с трендом
+                "event_data": {
                     "topic": getattr(event, 'topic', None),
                     "law_type": getattr(event, 'law_type', None),
                     "weather_type": getattr(event, 'weather_type', None),
@@ -660,19 +656,17 @@ class SimulationEngine:
                     "sim_time": event.timestamp,
                     "real_time": event.timestamp_real
                 },
-                processed_at=datetime.utcnow()
-            )
+                "processed_at": datetime.utcnow().isoformat(),
+                "processing_duration_ms": (datetime.utcnow() - start_time).total_seconds() * 1000
+            }
             
-            processing_time = (datetime.utcnow() - start_time).total_seconds() * 1000
-            db_event.processing_duration_ms = processing_time
+            # Добавляем в batch вместо немедленного сохранения
+            self.add_to_batch_update({
+                "type": "event",
+                **event_data
+            })
             
-            # Принудительно сохраняем событие в БД
-            await self.db_repo.create_event(db_event)
-            
-            # Проверка на принудительный commit после критических событий
-            if getattr(self, '_force_commit_after_this_event', False):
-                await self._batch_commit_states()
-                self._force_commit_after_this_event = False
+            # Убираем принудительный commit - теперь все события сохраняются в batch
                 
         except Exception as e:
             logger.error(json.dumps({
@@ -686,13 +680,12 @@ class SimulationEngine:
         
     async def _schedule_seed_actions(self) -> int:
         """
-        Создает первичные seed события для агентов, подходящих для PublishPost.
+        Создает первичные seed события для агентов, подходящих для различных действий.
         
-        Селективно выбирает агентов на основе их атрибутов:
-        - Достаточная энергия (>= 1.5)  
-        - Достаточный временной бюджет (>= 2)
-        - Высокая социальная активность (social_status >= 2.0)
-        - Склонность к публикациям (trend_receptivity >= 2.0)
+        Селективно выбирает агентов на основе их атрибутов и создает разнообразные события:
+        - PublishPost для агентов с высокой социальной активностью
+        - Purchase для агентов с достаточными финансовыми возможностями  
+        - SelfDev для агентов с низкой энергией
         """
         scheduled_count = 0
         context = SimulationContext(
@@ -702,59 +695,68 @@ class SimulationEngine:
         )
         
         # Селективный отбор подходящих агентов для seed событий
-        suitable_agents = []
+        post_agents = []
+        purchase_agents = []
+        selfdev_agents = []
+        
         for agent in self.agents:
-            if (agent.energy_level >= 0.5 and  # ИСПРАВЛЕНИЕ: снижаем с 1.5 до 0.5
-                agent.time_budget >= 1 and     # ИСПРАВЛЕНИЕ: снижаем с 2 до 1
-                agent.social_status >= 1.0 and # ИСПРАВЛЕНИЕ: снижаем с 2.0 до 1.0
-                agent.trend_receptivity >= 0.5): # ИСПРАВЛЕНИЕ: снижаем с 2.0 до 0.5
-                suitable_agents.append(agent)
+            # Логируем атрибуты агента для отладки
+            logger.info(json.dumps({
+                "event": "agent_attributes_check",
+                "agent_id": str(agent.id),
+                "profession": agent.profession,
+                "energy_level": agent.energy_level,
+                "time_budget": agent.time_budget,
+                "social_status": agent.social_status,
+                "trend_receptivity": agent.trend_receptivity,
+                "financial_capability": agent.financial_capability
+            }, default=str))
+            
+            # Классифицируем агентов по типам действий
+            if (agent.energy_level >= 0.5 and 
+                agent.time_budget >= 0.5 and 
+                agent.social_status >= 0.5 and 
+                agent.trend_receptivity >= 0.1):
+                post_agents.append(agent)
+                
+            if (agent.financial_capability >= 0.05 and 
+                agent.time_budget >= 0.5):
+                purchase_agents.append(agent)
+                
+            if (agent.time_budget >= 1.0 and 
+                agent.energy_level < 3.0):
+                selfdev_agents.append(agent)
         
         # Ограничиваем количество seed событий (10-20% от подходящих агентов)
         import random
-        if not suitable_agents:
-            logger.warning(json.dumps({
-                "event": "no_suitable_agents_for_seed",
-                "total_agents": len(self.agents),
-                "timestamp": self.current_time
-            }, default=str))
-            return 0
-            
-        seed_count = max(1, min(len(suitable_agents), int(len(suitable_agents) * 0.15)))
-        selected_agents = random.sample(suitable_agents, seed_count)
-        
-        logger.info(json.dumps({
-            "event": "seed_selection",
-            "total_agents": len(self.agents),
-            "suitable_agents": len(suitable_agents),
-            "selected_for_seed": seed_count,
-            "timestamp": self.current_time
-        }, default=str))
         
         # Создаем seed события с распределением по времени
         time_slots = []
-        if selected_agents:
+        total_seed_agents = len(post_agents) + len(purchase_agents) + len(selfdev_agents)
+        
+        if total_seed_agents > 0:
             # Равномерно распределяем события в первые 60 минут
-            interval = 60.0 / len(selected_agents)
-            for i in range(len(selected_agents)):
+            interval = 60.0 / total_seed_agents
+            for i in range(total_seed_agents):
                 base_time = i * interval
                 # Добавляем небольшой случайный разброс ±5 минут
                 jitter = random.uniform(-5.0, 5.0)
                 time_slots.append(max(1.0, base_time + jitter))
         
-        for i, agent in enumerate(selected_agents):
-            # Проверяем ежедневный лимит действий (43 в день)
-            if not self._can_agent_act_today(agent.id):
-                continue
+        slot_index = 0
+        
+        # Создаем события публикации
+        for agent in post_agents[:min(len(post_agents), 5)]:  # Максимум 5 постов
+            if slot_index >= len(time_slots):
+                break
                 
             # Агент принимает решение о теме
             topic = agent._select_best_topic(context)
             if topic:
-                # Используем предрассчитанный временной слот
-                delay = time_slots[i] if i < len(time_slots) else random.uniform(1.0, 60.0)
+                delay = time_slots[slot_index] if slot_index < len(time_slots) else random.uniform(1.0, 60.0)
                 
                 logger.info(json.dumps({
-                    "event": "creating_seed_action",
+                    "event": "creating_seed_post",
                     "agent_id": str(agent.id),
                     "topic": topic,
                     "delay": delay,
@@ -769,16 +771,71 @@ class SimulationEngine:
                 )
                 
                 self.add_event(action_event, EventPriority.AGENT_ACTION, action_event.timestamp)
-                self._track_agent_daily_action(agent.id)
                 scheduled_count += 1
+                slot_index += 1
+        
+        # Создаем события покупок
+        for agent in purchase_agents[:min(len(purchase_agents), 3)]:  # Максимум 3 покупки
+            if slot_index >= len(time_slots):
+                break
                 
-                logger.debug(json.dumps({
-                    "event": "seed_action_scheduled",
+            # Выбираем случайный уровень покупки
+            level = random.choice(["L1", "L2", "L3"])
+            if agent.can_purchase(self.current_time, level):
+                delay = time_slots[slot_index] if slot_index < len(time_slots) else random.uniform(1.0, 60.0)
+                
+                logger.info(json.dumps({
+                    "event": "creating_seed_purchase",
                     "agent_id": str(agent.id),
-                    "topic": topic,
-                    "delay_minutes": delay,
-                    "timestamp": action_event.timestamp
+                    "level": level,
+                    "delay": delay,
+                    "timestamp": self.current_time + delay,
+                    "current_time": self.current_time
                 }, default=str))
+                
+                action_event = PurchaseAction(
+                    agent_id=agent.id,
+                    purchase_level=level,
+                    timestamp=self.current_time + delay
+                )
+                
+                self.add_event(action_event, EventPriority.AGENT_ACTION, action_event.timestamp)
+                scheduled_count += 1
+                slot_index += 1
+        
+        # Создаем события саморазвития
+        for agent in selfdev_agents[:min(len(selfdev_agents), 2)]:  # Максимум 2 саморазвития
+            if slot_index >= len(time_slots):
+                break
+                
+            if agent.can_self_dev(self.current_time):
+                delay = time_slots[slot_index] if slot_index < len(time_slots) else random.uniform(1.0, 60.0)
+                
+                logger.info(json.dumps({
+                    "event": "creating_seed_selfdev",
+                    "agent_id": str(agent.id),
+                    "delay": delay,
+                    "timestamp": self.current_time + delay,
+                    "current_time": self.current_time
+                }, default=str))
+                
+                action_event = SelfDevAction(
+                    agent_id=agent.id,
+                    timestamp=self.current_time + delay
+                )
+                
+                self.add_event(action_event, EventPriority.AGENT_ACTION, action_event.timestamp)
+                scheduled_count += 1
+                slot_index += 1
+        
+        logger.info(json.dumps({
+            "event": "seed_actions_created",
+            "post_agents": len(post_agents),
+            "purchase_agents": len(purchase_agents),
+            "selfdev_agents": len(selfdev_agents),
+            "scheduled_count": scheduled_count,
+            "timestamp": self.current_time
+        }, default=str))
         
         return scheduled_count
 
@@ -827,8 +884,8 @@ class SimulationEngine:
                 else:
                     new_value = old_value + delta
                 setattr(agent, attr_name, new_value)
-                # Логируем историю только для значимых изменений
-                if abs(delta) >= 0.01:
+                # ИСПРАВЛЕНИЕ: Сохраняем только значимые изменения атрибутов (delta >= 0.1)
+                if abs(delta) >= 0.1:
                     history_record = {
                         "type": "attribute_history",
                         "person_id": agent_id,
@@ -842,16 +899,8 @@ class SimulationEngine:
                         "change_timestamp": update_state["timestamp"]
                     }
                     self.add_to_batch_update(history_record)
-            person_update = {
-                "type": "person_state",
-                "id": agent_id,
-                "reason": update_state["reason"],
-                "source_trend_id": update_state.get("source_trend_id"),
-                "timestamp": update_state["timestamp"]
-            }
-            for attr, delta in update_state["attribute_changes"].items():
-                person_update[attr] = getattr(agent, attr, None)
-            self.add_to_batch_update(person_update)
+            # ИСПРАВЛЕНИЕ: НЕ создаем person_update - не обновляем таблицу persons напрямую
+            # Все изменения атрибутов сохраняются только в person_attribute_history
         logger.info(json.dumps({
             "event": "update_state_batch_processed",
             "batch_size": len(update_state_batch),
@@ -920,7 +969,7 @@ class SimulationEngine:
         Returns:
             Количество запланированных действий
         """
-        from capsim.simulation.actions.factory import ACTION_FACTORY
+        from capsim.domain.events import PublishPostAction, PurchaseAction, SelfDevAction
         import random
         
         # ИСПРАВЛЕНИЕ: Не планируем новые действия если близко к времени окончания
@@ -951,20 +1000,46 @@ class SimulationEngine:
             if agent.energy_level <= 0 or agent.time_budget <= 0:
                 continue
                 
-            # Проверяем ежедневный лимит действий (снято в v1.8 - есть лимиты по типам)
-            # if not self._can_agent_act_today(agent.id):
-            #     continue
-                
-            # Проверяем кулдаун агента (снижено до 15 минут в v1.8)
-            last_action_time = self._agent_action_cooldowns.get(agent.id, 0)
-            if self.current_time - last_action_time < 10.0:  # Снижено с 15 до 10 минут
+            # ИСПРАВЛЕНИЕ: Включаем проверку ежедневного лимита действий (43/день)
+            if not self._can_agent_act_today(agent.id):
                 continue
+                
+            # ИСПРАВЛЕНИЕ: Убираем cooldown для более активных агентов
+            # last_action_time = self._agent_action_cooldowns.get(agent.id, 0)
+            # if self.current_time - last_action_time < 10.0:  # Снижено с 15 до 10 минут
+            #     continue
                 
             eligible_agents.append(agent)
         
-        # v1.8: Увеличиваем активность до 20% от доступных агентов
-        max_actions = max(1, min(len(eligible_agents), int(len(eligible_agents) * 0.2)))
-        selected_agents = random.sample(eligible_agents, min(max_actions, len(eligible_agents)))
+        logger.info(json.dumps({
+            "event": "eligible_agents_found",
+            "eligible_count": len(eligible_agents),
+            "total_agents": len(self.agents)
+        }, default=str))
+        
+        # ИСПРАВЛЕНИЕ: Следуем ТЗ - максимум 43 действия/агента/день
+        # Рассчитываем доступные действия на основе времени симуляции
+        current_day = int(self.current_time // 1440)
+        day_start = current_day * 1440
+        day_end = min(day_start + 1440, self.end_time if self.end_time else float('inf'))
+        day_duration = day_end - day_start
+        
+        # Максимум действий на день для всех агентов
+        max_daily_actions = len(eligible_agents) * 43
+        
+        # Распределяем действия равномерно по времени дня
+        actions_per_minute = max_daily_actions / day_duration if day_duration > 0 else 0
+        
+        # ИСПРАВЛЕНИЕ: Ограничиваем действия в текущем цикле (каждые 10 минут)
+        # 20 действий/день = 0.0139 действий/минуту на агента
+        # Увеличиваем до 50% агентов за цикл для достижения нужной активности
+        max_actions_this_cycle = min(
+            len(eligible_agents),
+            max(1, int(len(eligible_agents) * 0.5)),  # Максимум 50% агентов за цикл
+            max(1, int(actions_per_minute * 10))  # 10 минут = один цикл
+        )
+        
+        selected_agents = random.sample(eligible_agents, min(max_actions_this_cycle, len(eligible_agents)))
         
         # Получаем текущий главный тренд для передачи в решения
         current_trend = None
@@ -972,51 +1047,112 @@ class SimulationEngine:
             # Берем тренд с наивысшей виральностью
             current_trend = max(self.active_trends.values(), key=lambda t: t.calculate_current_virality())
         
+        logger.info(json.dumps({
+            "event": "selected_agents_for_v18",
+            "selected_count": len(selected_agents),
+            "current_trend": str(current_trend.trend_id) if current_trend else None
+        }, default=str))
+        
         for agent in selected_agents:
             # v1.8: Используем новый алгоритм принятия решений
             action_name = agent.decide_action_v18(current_trend, self.current_time)
+            
+            logger.info(json.dumps({
+                "event": "agent_decision_made",
+                "agent_id": str(agent.id),
+                "action_name": action_name,
+                "energy": agent.energy_level,
+                "time_budget": agent.time_budget,
+                "financial_capability": agent.financial_capability
+            }, default=str))
+            
             if not action_name:
                 continue
                 
-            # Получаем готовый объект действия из фабрики (или класс для BC)
-            action_obj = ACTION_FACTORY.get(action_name)
-            if not action_obj:
-                logger.warning(json.dumps({
-                    "event": "unknown_action_type",
-                    "action_name": action_name,
-                    "agent_id": str(agent.id)
-                }))
-                continue
-                
-            # Если в мапе лежит класс (legacy), инстанцируем, иначе берём как есть
-            if isinstance(action_obj, type):
-                action = action_obj()
-            else:
-                action = action_obj
-
-            # Проверяем возможность выполнения
-            if not action.can_execute(agent, self.current_time):
-                continue
-                
-            # v1.8: Выполняем действие немедленно (не откладываем)
+            # ИСПРАВЛЕНИЕ: Создаем события напрямую вместо использования Action Factory
             try:
-                action.execute(agent, self)
-                self._agent_action_cooldowns[agent.id] = self.current_time
-                scheduled_count += 1
+                # Добавляем небольшую задержку для предотвращения одновременных событий
+                delay = random.uniform(0.1, 2.0)
+                event_timestamp = self.current_time + delay
                 
-                logger.debug(json.dumps({
-                    "event": "v18_action_executed",
-                    "agent_id": str(agent.id),
-                    "action_name": action_name,
-                    "profession": agent.profession,
-                    "timestamp": self.current_time,
-                    "energy_after": agent.energy_level,
-                    "purchases_today": getattr(agent, 'purchases_today', 0)
-                }, default=str))
+                if action_name == "Post":
+                    # Выбираем лучшую тему для поста
+                    best_topic = "ECONOMIC"  # Дефолт
+                    if hasattr(agent, 'interests') and agent.interests:
+                        best_topic = max(agent.interests.keys(), key=lambda t: agent.interests[t]).upper()
+                    
+                    # Создаем событие публикации поста
+                    post_event = PublishPostAction(
+                        agent_id=agent.id,
+                        topic=best_topic,
+                        timestamp=event_timestamp
+                    )
+                    
+                    # Добавляем событие в очередь
+                    self.add_event(post_event, EventPriority.AGENT_ACTION, event_timestamp)
+                    self._track_agent_daily_action(agent.id)
+                    scheduled_count += 1
+                    
+                    logger.debug(json.dumps({
+                        "event": "post_event_scheduled",
+                        "agent_id": str(agent.id),
+                        "topic": best_topic,
+                        "timestamp": event_timestamp,
+                        "profession": agent.profession
+                    }, default=str))
+                    
+                elif action_name.startswith("Purchase_"):
+                    level = action_name.split("_")[1]  # L1, L2, L3
+                    
+                    # Проверяем возможность покупки
+                    if agent.can_purchase(self.current_time, level):
+                        # Создаем событие покупки
+                        purchase_event = PurchaseAction(
+                            agent_id=agent.id,
+                            purchase_level=level,
+                            timestamp=event_timestamp
+                        )
+                        
+                        # Добавляем событие в очередь
+                        self.add_event(purchase_event, EventPriority.AGENT_ACTION, event_timestamp)
+                        self._track_agent_daily_action(agent.id)
+                        scheduled_count += 1
+                        
+                        logger.debug(json.dumps({
+                            "event": "purchase_event_scheduled",
+                            "agent_id": str(agent.id),
+                            "level": level,
+                            "timestamp": event_timestamp,
+                            "profession": agent.profession
+                        }, default=str))
+                
+                elif action_name == "SelfDev":
+                    # Проверяем возможность саморазвития
+                    if agent.can_self_dev(self.current_time):
+                        # Создаем событие саморазвития
+                        selfdev_event = SelfDevAction(
+                            agent_id=agent.id,
+                            timestamp=event_timestamp
+                        )
+                        
+                        # Добавляем событие в очередь
+                        self.add_event(selfdev_event, EventPriority.AGENT_ACTION, event_timestamp)
+                        self._track_agent_daily_action(agent.id)
+                        scheduled_count += 1
+                        
+                        logger.debug(json.dumps({
+                            "event": "selfdev_event_scheduled",
+                            "agent_id": str(agent.id),
+                            "timestamp": event_timestamp,
+                            "profession": agent.profession
+                        }, default=str))
+                
+                # Обновляем cooldown для агента
+                self._agent_action_cooldowns[agent.id] = self.current_time
                 
             except Exception as e:
                 logger.error(json.dumps({
-                    "event": "action_execution_error",
+                    "event": "action_scheduling_error",
                     "agent_id": str(agent.id),
                     "action_name": action_name,
                     "error": str(e)
@@ -1032,15 +1168,16 @@ class SimulationEngine:
                 "current_trend": str(current_trend.trend_id) if current_trend else None
             }, default=str))
         
-        # Дополнительный лёгкий планировщик Wellness-действий (Purchase/SelfDev)
-        scheduled_count += self._schedule_random_wellness()
+        # ИСПРАВЛЕНИЕ: Отключаем дополнительный wellness планировщик
+        # Все действия теперь планируются только через основной планировщик
+        # scheduled_count += self._schedule_random_wellness()
         
         return scheduled_count
 
     def _schedule_random_wellness(self) -> int:
         """Случайно планирует Purchase или SelfDev, чтобы обеспечить ≥1 действие/агент/сим-час."""
         import random
-        from capsim.simulation.actions.factory import ACTION_FACTORY
+        from capsim.domain.events import PurchaseAction, SelfDevAction
 
         actions_planned = 0
 
@@ -1061,18 +1198,33 @@ class SimulationEngine:
 
             # Выбор действия: если energy<3 → SelfDev, иначе Purchase L1-L3.
             if agent.energy_level < 3.0:
-                action = ACTION_FACTORY["SelfDev"]
-            else:
-                level = random.choice(["L1", "L2", "L3"])
-                action = ACTION_FACTORY[f"Purchase_{level}"]
-
-            if action.can_execute(agent, self.current_time):
-                try:
-                    # ИСПРАВЛЕНИЕ: Не применяем эффекты сразу - только планируем событие
-                    action.execute(agent, self)
+                # Создаем событие саморазвития
+                if agent.can_self_dev(self.current_time):
+                    delay = random.uniform(0.1, 1.5)
+                    event_timestamp = self.current_time + delay
+                    
+                    selfdev_event = SelfDevAction(
+                        agent_id=agent.id,
+                        timestamp=event_timestamp
+                    )
+                    
+                    self.add_event(selfdev_event, EventPriority.AGENT_ACTION, event_timestamp)
                     actions_planned += 1
-                except Exception:
-                    continue
+            else:
+                # Создаем событие покупки
+                level = random.choice(["L1", "L2", "L3"])
+                if agent.can_purchase(self.current_time, level):
+                    delay = random.uniform(0.1, 1.5)
+                    event_timestamp = self.current_time + delay
+                    
+                    purchase_event = PurchaseAction(
+                        agent_id=agent.id,
+                        purchase_level=level,
+                        timestamp=event_timestamp
+                    )
+                    
+                    self.add_event(purchase_event, EventPriority.AGENT_ACTION, event_timestamp)
+                    actions_planned += 1
 
         return actions_planned
 
@@ -1114,32 +1266,20 @@ class SimulationEngine:
         """Добавляет обновление в batch очередь с агрегацией."""
         update_type = update.get("type")
         
-        if update_type == "person_state":
-            # Агрегируем обновления состояния агентов
-            person_id = str(update["id"])
-            if person_id not in self._aggregated_updates:
-                self._aggregated_updates[person_id] = {
-                    "type": "person_state",
-                    "id": update["id"],
-                    "reason": update.get("reason", "aggregated"),
-                    "timestamp": update.get("timestamp", self.current_time)
-                }
-            
-            # Обновляем только последние значения атрибутов
-            for key, value in update.items():
-                if key not in ["type", "id", "reason", "timestamp", "source_trend_id"]:
-                    self._aggregated_updates[person_id][key] = value
-                    
-        elif update_type == "attribute_history":
+        # ИСПРАВЛЕНИЕ: Убираем обработку person_state - не обновляем таблицу persons
+        # Все изменения атрибутов сохраняются только в person_attribute_history
+        
+        if update_type == "attribute_history":
             # Сохраняем все записи истории (не агрегируем)
             self._aggregated_history.append(update)
             
         elif update_type == "trend_interaction":
             # Агрегируем взаимодействия с трендами
+            # Каждая запись = +1 к total_interactions в БД
             trend_id = str(update["trend_id"])
             existing = next((t for t in self._aggregated_trends if t["trend_id"] == trend_id), None)
             if existing:
-                existing["interaction_count"] = existing.get("interaction_count", 1) + 1
+                existing["interaction_count"] = existing.get("interaction_count", 0) + 1
             else:
                 self._aggregated_trends.append({
                     "trend_id": update["trend_id"],
@@ -1178,10 +1318,10 @@ class SimulationEngine:
 
         # 2. Commit по общему количеству накопленных изменений
         total_updates = (
-            len(self._aggregated_updates) +
             len(self._aggregated_history) +
             len(self._aggregated_trends) +
-            len(self._aggregated_trend_creations)
+            len(self._aggregated_trend_creations) +
+            len(self._aggregated_events)
         )
         
         if total_updates >= self.batch_size: # self.batch_size is 1000 from settings
@@ -1195,12 +1335,12 @@ class SimulationEngine:
         Теперь использует оптимизированные bulk-методы репозитория.
         """
         # Если нет накопленных изменений, выходим
-        if not self._aggregated_updates and not self._aggregated_history and not self._aggregated_trends and not self._aggregated_trend_creations:
+        if not self._aggregated_history and not self._aggregated_trends and not self._aggregated_trend_creations and not self._aggregated_events:
             return
 
         updates_count = (
-            len(self._aggregated_updates) + len(self._aggregated_history) +
-            len(self._aggregated_trends) + len(self._aggregated_trend_creations)
+            len(self._aggregated_history) +
+            len(self._aggregated_trends) + len(self._aggregated_trend_creations) + len(self._aggregated_events)
         )
         
         start_time = time.time()
@@ -1230,40 +1370,34 @@ class SimulationEngine:
                 history_models = [PersonAttributeHistory(**hr) for hr in history_cleaned]
                 await self.db_repo.bulk_create_person_attribute_history(history_models)
 
-            # 3. Обновления состояний агентов и участников
+            # 3. ИСПРАВЛЕНИЕ: Убираем обновления состояний агентов - не обновляем таблицу persons
+            # Все изменения атрибутов сохраняются только в person_attribute_history
+            # Оставляем только обновления simulation_participants для cooldown'ов и счетчиков
             if self._aggregated_updates:
-                person_updates_clean = []
                 participant_updates = []
                 
                 for update in self._aggregated_updates.values():
-                    person_update = {'id': update['id']}
                     participant_update = {'simulation_id': self.simulation_id, 'person_id': update['id']}
                     
                     for key, value in update.items():
                         if key not in ['type', 'id', 'reason', 'source_trend_id', 'timestamp']:
                             if key in ['last_post_ts', 'last_selfdev_ts', 'last_purchase_ts', 'purchases_today']:
                                 participant_update[key] = value
-                            else:
-                                person_update[key] = value
                     
-                    if len(person_update) > 1:
-                        person_updates_clean.append(person_update)
                     if len(participant_update) > 2:
                         participant_updates.append(participant_update)
                 
-                if person_updates_clean:
-                    await self.db_repo.bulk_update_persons(person_updates_clean)
                 if participant_updates:
                     await self.db_repo.bulk_update_simulation_participants(participant_updates)
 
-            # 4. Обновление счетчиков взаимодействий с трендами
-            if self._aggregated_trends:
-                trend_ids_to_increment = [t["trend_id"] for t in self._aggregated_trends]
-                await self.db_repo.bulk_increment_trend_interactions(trend_ids_to_increment)
-
-            # 5. Создание событий (ВАЖНО: должно быть после создания трендов)
+            # 4. Создание событий (ВАЖНО: должно быть после создания трендов)
             if self._aggregated_events:
                 await self.db_repo.bulk_create_events(self._aggregated_events)
+
+            # 5. Обновление счетчиков взаимодействий с трендами
+            if self._aggregated_trends:
+                trend_counts = [(t["trend_id"], t["interaction_count"]) for t in self._aggregated_trends]
+                await self.db_repo.bulk_increment_trend_interactions(trend_counts)
                 
             commit_time = (time.time() - start_time) * 1000
             
@@ -1272,7 +1406,6 @@ class SimulationEngine:
                 "simulation_id": str(self.simulation_id),
                 "updates_count": updates_count,
                 "history_records": len(self._aggregated_history),
-                "person_updates": len(self._aggregated_updates),
                 "trend_updates": len(self._aggregated_trends),
                 "trend_creations": len(self._aggregated_trend_creations),
                 "events_created": len(self._aggregated_events),
@@ -1289,7 +1422,6 @@ class SimulationEngine:
             return
 
         # Очищаем агрегированные данные только после успешного коммита
-        self._aggregated_updates.clear()
         self._aggregated_history.clear()
         self._aggregated_trends.clear()
         self._aggregated_trend_creations.clear()

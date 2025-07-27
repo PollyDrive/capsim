@@ -2,7 +2,7 @@
 Trend - класс для представления информационных трендов в симуляции.
 """
 
-from typing import Optional
+from typing import Optional, List
 from uuid import UUID, uuid4
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
@@ -85,7 +85,7 @@ class Trend:
         if self.total_interactions == 0:
             return self.base_virality_score
             
-        logarithmic_bonus = 0.05 * math.log(self.total_interactions + 1)
+        logarithmic_bonus = 0.01 * math.log(self.total_interactions + 1)
         return min(5.0, self.base_virality_score + logarithmic_bonus)
         
     def add_interaction(self) -> None:
