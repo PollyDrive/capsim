@@ -4,6 +4,7 @@
 # Environment variables
 .env
 .env.local
+.env.local.md
 .env.production
 .env.staging
 *.env
@@ -57,6 +58,7 @@ venv.bak/
 
 # Reports (moved to prevent accidental exposure)
 /docs/reports/
+/journals
 
 # Docker secrets
 docker-compose.override.yml

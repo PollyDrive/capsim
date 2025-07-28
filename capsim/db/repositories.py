@@ -8,7 +8,11 @@ from datetime import datetime, date
 from typing import List, Dict, Optional, Any, Set, Tuple
 from uuid import UUID, uuid4
 
-from faker import Faker
+try:
+    from faker import Faker
+    HAS_FAKER = True
+except ImportError:
+    HAS_FAKER = False
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import select, insert, update, delete, text

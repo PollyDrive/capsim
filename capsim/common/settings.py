@@ -3,10 +3,15 @@ Settings и configuration для CAPSIM симуляции.
 """
 
 import os
-import yaml
 from typing import Optional, Dict, Any
 from pathlib import Path
 import logging
+
+try:
+    import yaml
+    HAS_YAML = True
+except ImportError:
+    HAS_YAML = False
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +30,11 @@ class ActionConfig:
         """Load configuration from config/actions.yaml."""
         config_path = Path(__file__).parent.parent.parent / "config" / "actions.yaml"
         
+        if not HAS_YAML:
+            logger.warning("YAML module not available, using default action config")
+            self._load_defaults()
+            return
+            
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
                 config_data = yaml.safe_load(f)
@@ -112,17 +122,17 @@ class Settings:
             raise ValueError("DATABASE_URL_RO environment variable is required")
     
     # Simulation core settings  
-    DECIDE_SCORE_THRESHOLD: float = float(os.getenv("DECIDE_SCORE_THRESHOLD"))
-    BASE_RATE: float = float(os.getenv("BASE_RATE"))
+    DECIDE_SCORE_THRESHOLD: float = float(os.getenv("DECIDE_SCORE_THRESHOLD", "0.15"))
+    BASE_RATE: float = float(os.getenv("BASE_RATE", "0.1"))
     BATCH_SIZE: int = int(os.getenv("BATCH_SIZE", "1000")) # Увеличено с 100 до 1000
     
     # Realtime mode configuration  
-    SIM_SPEED_FACTOR: float = float(os.getenv("SIM_SPEED_FACTOR"))
-    ENABLE_REALTIME: bool = os.getenv("ENABLE_REALTIME").lower() == "true"
+    SIM_SPEED_FACTOR: float = float(os.getenv("SIM_SPEED_FACTOR", "60.0"))
+    ENABLE_REALTIME: bool = os.getenv("ENABLE_REALTIME", "false").lower() == "true"
     
     # Performance settings
-    BATCH_RETRY_ATTEMPTS: int = int(os.getenv("BATCH_RETRY_ATTEMPTS"))
-    BATCH_RETRY_BACKOFFS: str = os.getenv("BATCH_RETRY_BACKOFFS")
+    BATCH_RETRY_ATTEMPTS: int = int(os.getenv("BATCH_RETRY_ATTEMPTS", "3"))
+    BATCH_RETRY_BACKOFFS: str = os.getenv("BATCH_RETRY_BACKOFFS", "1,2,4")
     SHUTDOWN_TIMEOUT_SEC: int = int(os.getenv("SHUTDOWN_TIMEOUT_SEC", "30"))
     MAX_QUEUE_SIZE: int = int(os.getenv("MAX_QUEUE_SIZE", "5000"))
     BATCH_COMMIT_TIMEOUT_SEC: int = int(os.getenv("BATCH_COMMIT_TIMEOUT_SEC", "5"))

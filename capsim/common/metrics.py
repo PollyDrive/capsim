@@ -49,6 +49,44 @@ EVENTS_TABLE_ROWS = Gauge(
     'Total number of rows in events table'
 )
 
+# v2.0: Economic balance metrics
+ECONOMIC_BALANCE_METRICS = {
+    'avg_financial_capability': Gauge(
+        'capsim_avg_financial_capability_by_profession',
+        'Average financial capability by profession',
+        ['profession']
+    ),
+    'daily_income_total': Counter(
+        'capsim_daily_income_total',
+        'Total daily income distributed',
+        ['profession']
+    ),
+    'daily_expenses_total': Counter(
+        'capsim_daily_expenses_total', 
+        'Total daily expenses deducted',
+        ['profession']
+    ),
+    'energy_recovery_events': Counter(
+        'capsim_energy_recovery_events_total',
+        'Total energy recovery events processed'
+    ),
+    'night_recovery_success': Counter(
+        'capsim_night_recovery_success_total',
+        'Successful night recovery operations',
+        ['recovery_type']
+    ),
+    'social_status_changes': Counter(
+        'capsim_social_status_changes_total',
+        'Social status changes tracked',
+        ['change_type', 'profession']
+    ),
+    'economic_balance_errors': Counter(
+        'capsim_economic_balance_errors_total',
+        'Economic balance system errors',
+        ['error_type']
+    )
+}
+
 EVENTS_INSERT_RATE = Gauge(
     'capsim_events_insert_rate_per_minute',
     'INSERT operations per minute into events table'
@@ -383,4 +421,55 @@ def update_agent_attributes(persons):
         for attr_name, values in attributes.items():
             if values:  # Проверяем что есть значения
                 p95_value = np.percentile(values, 95)
-                AGENT_ATTRIBUTE.labels(attribute=attr_name, profession=prof).set(p95_value) 
+                AGENT_ATTRIBUTE.labels(attribute=attr_name, profession=prof).set(p95_value)
+
+
+# v2.0: Economic balance metrics functions
+def record_daily_income(profession: str, amount: float):
+    """Record daily income distributed to agents."""
+    ECONOMIC_BALANCE_METRICS['daily_income_total'].labels(profession=profession).inc(amount)
+
+
+def record_daily_expenses(profession: str, amount: float):
+    """Record daily expenses deducted from agents."""
+    ECONOMIC_BALANCE_METRICS['daily_expenses_total'].labels(profession=profession).inc(amount)
+
+
+def record_energy_recovery():
+    """Record energy recovery event."""
+    ECONOMIC_BALANCE_METRICS['energy_recovery_events'].inc()
+
+
+def record_night_recovery(recovery_type: str):
+    """Record successful night recovery operation."""
+    ECONOMIC_BALANCE_METRICS['night_recovery_success'].labels(recovery_type=recovery_type).inc()
+
+
+def record_social_status_change(change_type: str, profession: str):
+    """Record social status change."""
+    ECONOMIC_BALANCE_METRICS['social_status_changes'].labels(
+        change_type=change_type, 
+        profession=profession
+    ).inc()
+
+
+def record_economic_balance_error(error_type: str):
+    """Record economic balance system error."""
+    ECONOMIC_BALANCE_METRICS['economic_balance_errors'].labels(error_type=error_type).inc()
+
+
+def update_financial_capability_by_profession(persons):
+    """Update average financial capability metrics by profession."""
+    from collections import defaultdict
+    
+    by_profession = defaultdict(list)
+    
+    for person in persons:
+        by_profession[person.profession].append(person.financial_capability)
+    
+    for profession, values in by_profession.items():
+        if values:
+            avg_value = sum(values) / len(values)
+            ECONOMIC_BALANCE_METRICS['avg_financial_capability'].labels(
+                profession=profession
+            ).set(avg_value) 

@@ -71,9 +71,10 @@ class PublishPostAction(BaseEvent):
         Обрабатывает публикацию поста.
         
         1. Проверяет ограничения агента (энергия, время)
-        2. Создает новый тренд через TrendProcessor
-        3. Обновляет состояние агента
-        4. Запускает распространение влияния
+        2. Применяет затраты энергии (v2.0)
+        3. Создает новый тренд через TrendProcessor
+        4. Обновляет состояние агента
+        5. Запускает распространение влияния
         """
         # Найти агента
         agent = None
@@ -103,6 +104,13 @@ class PublishPostAction(BaseEvent):
                 "day_time": self.timestamp % 1440
             }, default=str))
             return
+        
+        # v2.0: Применить затраты энергии за действие
+        try:
+            from ..common.economic_balance import economic_balance_manager
+            energy_cost = economic_balance_manager.apply_energy_cost(agent, "post")
+        except ImportError:
+            energy_cost = 0.0
             
         # Создать новый тренд
         from ..domain.trend import Trend, CoverageLevel
@@ -184,6 +192,14 @@ class PublishPostAction(BaseEvent):
         # v1.9: Обновляем только cooldown и tracking атрибуты
         agent.last_post_ts = self.timestamp
         agent.actions_today += 1  # ИСПРАВЛЕНИЕ: Увеличиваем счетчик всех действий
+        
+        # v2.0: Отслеживаем изменение социального статуса для экономической модели
+        try:
+            from ..common.economic_balance import economic_balance_manager
+            # Пост дает небольшой бонус к социальному статусу
+            economic_balance_manager.track_status_change(agent, 0.05)
+        except ImportError:
+            pass
         
         # Добавить в batch обновления (только tracking атрибуты)
         engine.add_to_batch_update({
@@ -376,6 +392,77 @@ class MorningRecoveryEvent(BaseEvent):
         }, default=str))
 
 
+class NightRecoveryEvent(BaseEvent):
+    """v2.0: Событие ночного восстановления ресурсов агентов с экономической моделью."""
+    
+    def __init__(self, timestamp: float):
+        super().__init__(EventPriority.SYSTEM, timestamp)
+    
+    def process(self, engine: "SimulationEngine") -> None:
+        """Обработать ночное восстановление для всех агентов согласно экономической модели v2.0."""
+        try:
+            from ..common.economic_balance import economic_balance_manager
+        except ImportError:
+            logger.warning("Economic balance manager not available, skipping night recovery")
+            return
+        
+        recovery_count = 0
+        total_changes = {
+            "time_budget": 0.0,
+            "energy_level": 0.0,
+            "financial_capability": 0.0,
+            "daily_expenses": 0.0
+        }
+        
+        for agent in engine.agents:
+            changes = economic_balance_manager.perform_night_recovery(agent)
+            if changes:
+                recovery_count += 1
+                
+                # Записываем изменения в историю атрибутов
+                for attr_name, delta in changes.items():
+                    if attr_name in total_changes:
+                        total_changes[attr_name] += delta
+                    
+                    # Пропускаем служебные поля
+                    if attr_name in ["daily_expenses"]:
+                        continue
+                        
+                    old_value = getattr(agent, attr_name) - delta
+                    engine.add_to_batch_update({
+                        "type": "attribute_history",
+                        "person_id": agent.id,
+                        "simulation_id": engine.simulation_id,
+                        "attribute_name": attr_name,
+                        "old_value": old_value,
+                        "new_value": getattr(agent, attr_name),
+                        "delta": delta,
+                        "reason": "NightRecovery",
+                        "source_trend_id": None,
+                        "change_timestamp": self.timestamp
+                    })
+        
+        # Планируем следующее ночное восстановление (через 24 часа)
+        next_recovery_time = self.timestamp + 1440.0  # 24 часа = 1440 минут
+        if engine.should_schedule_future_event(next_recovery_time):
+            next_recovery = NightRecoveryEvent(timestamp=next_recovery_time)
+            engine.add_event(next_recovery, EventPriority.SYSTEM, next_recovery_time)
+        else:
+            logger.info(json.dumps({
+                "event": "night_recovery_cycle_ended",
+                "reason": "simulation_end_time_reached",
+                "timestamp": self.timestamp,
+                "end_time": engine.end_time
+            }, default=str))
+        
+        logger.info(json.dumps({
+            "event": "night_recovery_completed",
+            "recovered_agents": recovery_count,
+            "total_changes": total_changes,
+            "timestamp": self.timestamp
+        }, default=str))
+
+
 class DailyResetEvent(BaseEvent):
     """v1.8: Event для ежедневного сброса счетчиков агентов (каждые 1440 минут)."""
     
@@ -435,13 +522,20 @@ class PurchaseAction(BaseEvent):
         self.purchase_level = purchase_level  # L1, L2, L3
     
     def process(self, engine: "SimulationEngine") -> None:
-        """Execute purchase action согласно ТЗ v1.9."""
+        """Execute purchase action согласно ТЗ v1.9 + v2.0 economic model."""
         from ..common.settings import action_config
         import random
         
         agent = next((a for a in engine.agents if a.id == self.agent_id), None)
         if not agent:
             return
+        
+        # v2.0: Применить затраты энергии за действие
+        try:
+            from ..common.economic_balance import economic_balance_manager
+            energy_cost = economic_balance_manager.apply_energy_cost(agent, f"purchase_{self.purchase_level}")
+        except ImportError:
+            energy_cost = 0.0
             
         # Получаем эффекты для данного уровня покупки согласно ТЗ v1.9
         effects = action_config.effects["PURCHASE"][self.purchase_level]
@@ -472,6 +566,15 @@ class PurchaseAction(BaseEvent):
         agent.purchases_today += 1
         agent.actions_today += 1  # ИСПРАВЛЕНИЕ: Увеличиваем счетчик всех действий
         agent.last_purchase_ts[self.purchase_level] = self.timestamp
+        
+        # v2.0: Отслеживаем изменение социального статуса для экономической модели
+        try:
+            from ..common.economic_balance import economic_balance_manager
+            status_change = purchase_effects.get("social_status", 0.0)
+            if status_change != 0:
+                economic_balance_manager.track_status_change(agent, status_change)
+        except ImportError:
+            pass
         
         # ИСПРАВЛЕНИЕ: Создаем записи в person_attribute_history для каждого измененного атрибута
         # Сохраняем изменения атрибутов в историю
@@ -523,12 +626,19 @@ class SelfDevAction(BaseEvent):
         self.agent_id = agent_id
     
     def process(self, engine: "SimulationEngine") -> None:
-        """Execute self-development action согласно ТЗ v1.8."""
+        """Execute self-development action согласно ТЗ v1.8 + v2.0 economic model."""
         from ..common.settings import action_config
         
         agent = next((a for a in engine.agents if a.id == self.agent_id), None)
         if not agent:
             return
+        
+        # v2.0: Применить затраты энергии за действие
+        try:
+            from ..common.economic_balance import economic_balance_manager
+            energy_cost = economic_balance_manager.apply_energy_cost(agent, "selfdev")
+        except ImportError:
+            energy_cost = 0.0
             
         # Получаем эффекты саморазвития согласно ТЗ v1.8
         effects = action_config.effects["SELF_DEV"]
@@ -539,6 +649,15 @@ class SelfDevAction(BaseEvent):
         # Update v1.8 tracking attributes
         agent.last_selfdev_ts = self.timestamp
         agent.actions_today += 1  # ИСПРАВЛЕНИЕ: Увеличиваем счетчик всех действий
+        
+        # v2.0: Отслеживаем изменение социального статуса для экономической модели
+        try:
+            from ..common.economic_balance import economic_balance_manager
+            status_change = effects.get("social_status", 0.0)
+            if status_change != 0:
+                economic_balance_manager.track_status_change(agent, status_change)
+        except ImportError:
+            pass
         
         # ИСПРАВЛЕНИЕ: Создаем записи в person_attribute_history для каждого измененного атрибута
         # Сохраняем изменения атрибутов в историю

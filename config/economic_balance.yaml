@@ -1,0 +1,138 @@
+# CAPSIM v2.0 Economic Balance Configuration
+# Конфигурация экономической модели для решения дисбаланса атрибутов
+
+# Коэффициенты профессиональных доходов
+# базовый_доход = initial_financial_capability × profession_coefficient
+INCOME_COEFFICIENTS:
+  Unemployed: 0.0        # Отсутствие дохода
+  Student: 0.2           # Стипендия/подработка
+  Artist: 0.5            # Низкий нерегулярный доход
+  Teacher: 0.6           # Низкий стабильный доход
+  SpiritualMentor: 0.6   # Пожертвования
+  Philosopher: 0.7       # Академический доход
+  ShopClerk: 0.8         # Средний доход
+  Worker: 0.8            # Рабочий доход
+  Artisan: 0.8           # Ремесленный доход
+  Developer: 1.0         # Хороший доход
+  Doctor: 1.1            # Высокий доход
+  Marketer: 1.1          # Маркетинговый доход
+  Blogger: 1.2           # Доход от контента
+  Businessman: 1.3       # Высокий бизнес-доход
+  Politician: 1.5        # Максимальный доход
+  Athlete: 1.2           # Спортивный доход
+  Fraudster: 0.9         # Нелегальный доход (нестабильный)
+
+# Обязательные ежедневные расходы по профессиям
+DAILY_EXPENSES:
+  Unemployed: 0.5        # Минимальные потребности
+  Student: 0.8           # Учебные расходы
+  Artist: 1.0            # Материалы для творчества
+  Teacher: 1.2           # Профессиональные расходы
+  SpiritualMentor: 1.0   # Скромные потребности
+  Philosopher: 1.1       # Книги, исследования
+  ShopClerk: 1.5         # Средние потребности
+  Worker: 1.8            # Рабочие расходы
+  Artisan: 1.6           # Материалы и инструменты
+  Developer: 2.0         # Техника, обучение
+  Doctor: 2.2            # Высокие стандарты жизни
+  Marketer: 1.9          # Представительские расходы
+  Blogger: 1.8           # Оборудование, контент
+  Businessman: 2.5       # Представительские расходы
+  Politician: 3.0        # Максимальные расходы
+  Athlete: 2.1           # Спортивное питание, экипировка
+  Fraudster: 1.4         # Скрытые расходы
+
+# Базовые траты энергии за действия (АДДИТИВНО к существующим эффектам)
+ENERGY_COSTS:
+  base_activity: 0.3     # Базовая трата за любое действие
+  stress_actions: 0.5    # Споры, негативные посты
+  post_action: 0.2       # Дополнительно к базовой трате
+  purchase_action: 0.1   # Минимальная трата на покупки
+  selfdev_action: 0.4    # Умственная нагрузка
+
+# Временные затраты на действия (в минутах)
+TIME_COSTS:
+  simple_actions: [5, 15]    # Лайки, комментарии (диапазон)
+  complex_actions: [30, 60]  # Создание контента, покупки
+  post_action: 15            # Время на создание поста
+  purchase_action: 10        # Время на покупку
+  selfdev_action: 80         # Время на саморазвитие
+
+# Система социального статуса
+STATUS_GAINS:
+  expensive_purchases:
+    L1: 0.05                 # Базовые покупки
+    L2: 0.1                  # Средние покупки
+    L3: 0.2                  # Дорогие покупки
+    diminishing_returns: 0.8 # Убывающая отдача от частых покупок
+  
+  quality_content:
+    high_engagement: 0.4     # Популярный контент (>10 взаимодействий)
+    medium_engagement: 0.2   # Средний контент (5-10 взаимодействий)
+    low_engagement: 0.1      # Базовый контент (<5 взаимодействий)
+  
+  positive_posts: 0.15       # Позитивные посты
+  selfdev_bonus: 0.1         # Бонус за саморазвитие
+
+STATUS_LOSSES:
+  negative_content: -0.3     # Негативный контент
+  controversial_posts: -0.2  # Спорные посты
+  inactivity_penalty: -0.05  # Штраф за неактивность (еженедельно)
+  excessive_purchases: -0.1  # Штраф за чрезмерное потребление
+
+# Ночное восстановление (00:00-08:00)
+NIGHT_RECOVERY:
+  energy_bonus: 1.2          # Множитель восстановления энергии
+  financial_bonus: 1.0       # Множитель дохода
+  time_full_restore: true    # Полное восстановление времени
+  reset_daily_counters: true # Сброс дневных счетчиков
+  
+  # Условия для начисления дохода
+  income_conditions:
+    social_status_growth: true    # Требуется рост социального статуса
+    minimum_activity: 3           # Минимум 3 действия за день
+    
+# Максимальные значения time_budget по профессиям (для ночного восстановления)
+MAX_TIME_BUDGET:
+  Unemployed: 5.0
+  Student: 4.0
+  Artist: 4.0
+  Teacher: 3.0
+  SpiritualMentor: 4.0
+  Philosopher: 4.0
+  ShopClerk: 3.0
+  Worker: 3.0
+  Artisan: 4.0
+  Developer: 4.0
+  Doctor: 3.0
+  Marketer: 4.0
+  Blogger: 4.0
+  Businessman: 3.0
+  Politician: 3.0
+  Athlete: 4.0
+  Fraudster: 5.0
+
+# Настройки дневного/ночного цикла
+DAY_NIGHT_CYCLE:
+  day_start: 8              # 08:00 - начало дня
+  day_end: 24               # 24:00 - конец дня
+  night_activity_chance: 0.2 # 20% шанс активности ночью
+  
+# Балансировочные параметры
+BALANCE_SETTINGS:
+  enable_income_system: true      # Включить систему доходов
+  enable_daily_expenses: true     # Включить ежедневные расходы
+  enable_energy_costs: true       # Включить траты энергии
+  enable_night_recovery: true     # Включить ночное восстановление
+  enable_status_system: true      # Включить систему социального статуса
+  
+  # Отладочные параметры
+  debug_economic_events: false    # Логировать экономические события
+  log_night_recovery: false       # Логировать ночное восстановление
+  
+# Пороги для алертов мониторинга
+MONITORING_THRESHOLDS:
+  critical_financial_drop: -2.0   # Критическое падение финансов
+  energy_exhaustion: 0.5          # Истощение энергии
+  time_budget_depletion: 0.2      # Истощение времени
+  social_status_crash: -1.0       # Обвал социального статуса

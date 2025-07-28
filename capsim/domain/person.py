@@ -127,7 +127,10 @@ class Person:
         """
         for attribute, delta in changes.items():
             if hasattr(self, attribute):
-                current_value = float(getattr(self, attribute))  # Конвертируем Decimal в float
+                raw_value = getattr(self, attribute)
+                if raw_value is None:
+                    continue  # Пропускаем None значения
+                current_value = float(raw_value)  # Конвертируем Decimal в float
                 
                 # Применяем ограничения по диапазону
                 if attribute in ["energy_level", "financial_capability", 
@@ -196,7 +199,10 @@ class Person:
         """
         for attribute, delta in effects.items():
             if hasattr(self, attribute):
-                current_value = float(getattr(self, attribute))  # Конвертируем Decimal в float
+                raw_value = getattr(self, attribute)
+                if raw_value is None:
+                    continue  # Пропускаем None значения
+                current_value = float(raw_value)  # Конвертируем Decimal в float
                 
                 # ИСПРАВЛЕНИЕ: Защита от NaN в входных данных
                 if math.isnan(current_value) or math.isnan(delta):

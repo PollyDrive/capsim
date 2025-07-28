@@ -17,7 +17,7 @@ from ..domain.person import Person
 from ..domain.trend import Trend
 from ..domain.events import (
     BaseEvent, EventPriority, PublishPostAction, PurchaseAction, SelfDevAction,
-    EnergyRecoveryEvent, DailyResetEvent, SaveDailyTrendEvent
+    EnergyRecoveryEvent, DailyResetEvent, SaveDailyTrendEvent, NightRecoveryEvent
 )
 from ..common.clock import Clock, create_clock
 from ..common.settings import settings
@@ -397,15 +397,15 @@ class SimulationEngine:
                     converted.append(DomainPerson(
                         id=p.id,
                         profession=p.profession,
-                        first_name=p.first_name,
-                        last_name=p.last_name,
-                        gender=p.gender,
+                        first_name=p.first_name or "Unknown",
+                        last_name=p.last_name or "Person",
+                        gender=p.gender or "male",
                         date_of_birth=p.date_of_birth,
-                        financial_capability=p.financial_capability,
-                        trend_receptivity=p.trend_receptivity,
-                        social_status=p.social_status,
-                        energy_level=p.energy_level,
-                        time_budget=float(p.time_budget),
+                        financial_capability=p.financial_capability or 0.0,
+                        trend_receptivity=p.trend_receptivity or 0.0,
+                        social_status=p.social_status or 0.0,
+                        energy_level=p.energy_level or 5.0,
+                        time_budget=float(p.time_budget) if p.time_budget is not None else 2.5,
                         exposure_history=p.exposure_history or {},
                         interests=p.interests or {},
                         simulation_id=self.simulation_id
@@ -438,7 +438,7 @@ class SimulationEngine:
         if self.end_time is None:
             return
 
-        from capsim.domain.events import NightCycleEvent, MorningRecoveryEvent, DailyResetEvent, SaveDailyTrendEvent
+        from capsim.domain.events import NightCycleEvent, MorningRecoveryEvent, DailyResetEvent, SaveDailyTrendEvent, NightRecoveryEvent
 
         logger.info(json.dumps({
             "event": "scheduling_system_events_for_duration",
@@ -454,8 +454,13 @@ class SimulationEngine:
                 night_event_time = day_start_time
                 if night_event_time < self.end_time:
                     self.add_event(NightCycleEvent(night_event_time), EventPriority.SYSTEM, night_event_time)
+                    
+                    # v2.0: Добавляем NightRecoveryEvent сразу после NightCycleEvent
+                    night_recovery_time = day_start_time + 1.0  # Через 1 минуту после полуночи
+                    if night_recovery_time < self.end_time:
+                        self.add_event(NightRecoveryEvent(night_recovery_time), EventPriority.SYSTEM, night_recovery_time)
 
-            # 08:00 - MorningRecoveryEvent
+            # 08:00 - MorningRecoveryEvent (оставляем для совместимости)
             morning_event_time = day_start_time + 8 * 60
             if morning_event_time < self.end_time:
                 self.add_event(MorningRecoveryEvent(morning_event_time), EventPriority.SYSTEM, morning_event_time)
@@ -516,6 +521,7 @@ class SimulationEngine:
         try:
             last_time_update = self.current_time
             stagnation_counter = 0
+            events_processed = 0  # Счетчик обработанных событий
 
             # ИСПРАВЛЕНИЕ: Основной цикл должен завершаться по времени симуляции
             while self._running and self.current_time < end_time:
@@ -593,6 +599,7 @@ class SimulationEngine:
                 self.current_time = event_timestamp
                 
                 await self._process_event(priority_event.event)
+                events_processed += 1  # Увеличиваем счетчик обработанных событий
                 
                 # Проверить batch commit
                 if self._should_commit_batch():
