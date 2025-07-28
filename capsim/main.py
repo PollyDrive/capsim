@@ -36,7 +36,7 @@ def simulate(
     days: float = typer.Option(1.0, "--days", help="Duration of the simulation in days"),
     agents: int = typer.Option(100, "--agents", help="Number of agents"),
     db_url: Optional[str] = typer.Option(None, "--db-url", help="Database URL"),
-    speed: float = typer.Option(1.0, "--speed", help="Simulation speed factor"),
+    speed: float = typer.Option(240.0, "--speed", help="Simulation speed factor (240x = fast, 1x = realtime)"),
 ):
     """Run the CAPSIM simulation (wrapper around run_simulation_cli)."""
     if "PYTEST_CURRENT_TEST" in os.environ:

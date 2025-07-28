@@ -472,4 +472,121 @@ def update_financial_capability_by_profession(persons):
             avg_value = sum(values) / len(values)
             ECONOMIC_BALANCE_METRICS['avg_financial_capability'].labels(
                 profession=profession
-            ).set(avg_value) 
+            ).set(avg_value)
+
+
+def record_trend_receptivity_change(agent_id: str, profession: str, old_value: float, new_value: float, reason: str):
+    """Record trend_receptivity change for analysis."""
+    delta = new_value - old_value
+    
+    # Record the change in Prometheus metrics if available
+    try:
+        from prometheus_client import Counter, Histogram
+        
+        # Create metrics if they don't exist
+        if not hasattr(record_trend_receptivity_change, '_metrics_created'):
+            record_trend_receptivity_change.trend_receptivity_changes = Counter(
+                'capsim_trend_receptivity_changes_total',
+                'Total trend receptivity changes',
+                ['profession', 'reason', 'direction']
+            )
+            record_trend_receptivity_change.trend_receptivity_delta = Histogram(
+                'capsim_trend_receptivity_delta',
+                'Trend receptivity change magnitude',
+                ['profession', 'reason'],
+                buckets=[-0.3, -0.2, -0.1, -0.05, 0, 0.05, 0.1, 0.2, 0.3]
+            )
+            record_trend_receptivity_change._metrics_created = True
+        
+        direction = "increase" if delta > 0 else "decrease" if delta < 0 else "no_change"
+        record_trend_receptivity_change.trend_receptivity_changes.labels(
+            profession=profession, reason=reason, direction=direction
+        ).inc()
+        
+        record_trend_receptivity_change.trend_receptivity_delta.labels(
+            profession=profession, reason=reason
+        ).observe(delta)
+        
+    except ImportError:
+        pass  # Prometheus not available
+
+
+def generate_trend_receptivity_report(db_session, simulation_id: str, time_window_hours: int = 24):
+    """Generate a report on trend_receptivity dynamics by profession."""
+    import json
+    from collections import defaultdict
+    
+    # Query recent trend_receptivity changes
+    query = """
+        SELECT 
+            p.profession,
+            pah.old_value,
+            pah.new_value,
+            pah.delta,
+            pah.reason,
+            pah.change_timestamp
+        FROM person_attribute_history pah
+        JOIN simulation_participants sp ON pah.person_id = sp.person_id
+        JOIN persons p ON sp.person_id = p.id
+        WHERE pah.simulation_id = :simulation_id
+        AND pah.attribute_name = 'trend_receptivity'
+        AND pah.change_timestamp >= (
+            SELECT MAX(change_timestamp) - :time_window 
+            FROM person_attribute_history 
+            WHERE simulation_id = :simulation_id
+        )
+        ORDER BY pah.change_timestamp DESC
+    """
+    
+    try:
+        results = db_session.execute(query, {
+            "simulation_id": simulation_id,
+            "time_window": time_window_hours * 60  # Convert to minutes
+        }).fetchall()
+        
+        # Aggregate by profession
+        profession_stats = defaultdict(lambda: {
+            "total_changes": 0,
+            "positive_changes": 0,
+            "negative_changes": 0,
+            "total_delta": 0.0,
+            "avg_delta": 0.0,
+            "trend_influence_count": 0,
+            "self_dev_influence_count": 0
+        })
+        
+        for row in results:
+            prof = row.profession
+            delta = float(row.delta)
+            reason = row.reason
+            
+            stats = profession_stats[prof]
+            stats["total_changes"] += 1
+            stats["total_delta"] += delta
+            
+            if delta > 0:
+                stats["positive_changes"] += 1
+            elif delta < 0:
+                stats["negative_changes"] += 1
+                
+            if reason == "TrendInfluence":
+                stats["trend_influence_count"] += 1
+            elif reason == "SelfDevelopmentInfluence":
+                stats["self_dev_influence_count"] += 1
+        
+        # Calculate averages
+        for prof, stats in profession_stats.items():
+            if stats["total_changes"] > 0:
+                stats["avg_delta"] = stats["total_delta"] / stats["total_changes"]
+        
+        report = {
+            "simulation_id": simulation_id,
+            "time_window_hours": time_window_hours,
+            "total_records": len(results),
+            "profession_breakdown": dict(profession_stats)
+        }
+        
+        return report
+        
+    except Exception as e:
+        return {"error": str(e), "simulation_id": simulation_id} 

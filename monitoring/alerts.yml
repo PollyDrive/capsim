@@ -293,7 +293,7 @@ groups:
             Проверить:
             - Статус контейнера: docker ps | grep postgres
             - Логи: docker logs capsim-postgres-1
-            - Подключение: psql postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME} -c "SELECT 1"
+            - Подключение:  postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAMEpsql} -c "SELECT 1"
             
             Перезапуск: docker-compose restart postgres
 

@@ -134,7 +134,8 @@ def main():
     parser.add_argument("--agents", type=int, default=100, help="Количество агентов")
     parser.add_argument("--days", type=float, default=1, help="Продолжительность в днях")
     parser.add_argument("--db-url", type=str, help="URL базы данных")
-    parser.add_argument("--speed", type=float, default=1.0, help="Фактор скорости симуляции")
+    parser.add_argument("--speed", type=float, default=240.0, help="Фактор скорости симуляции (240x = быстро, 1x = реальное время)")
+    parser.add_argument("--240x", action="store_const", const=240.0, dest="speed", help="Быстрая симуляция (эквивалент --speed 240)")
     parser.add_argument("--test", action="store_true", help="Режим тестирования (короткая симуляция)")
     
     args = parser.parse_args()

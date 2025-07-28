@@ -586,12 +586,13 @@ class SimulationEngine:
                     break
 
                 # --- ИСПРАВЛЕНИЕ ЛОГИКИ СКОРОСТИ ---
-                if settings.ENABLE_REALTIME or settings.SIM_SPEED_FACTOR > 1.0:
+                # Делаем паузы только в realtime режиме или при медленной симуляции (speed < 10x)
+                if settings.ENABLE_REALTIME or settings.SIM_SPEED_FACTOR < 10.0:
                     sim_time_delta = event_timestamp - self.current_time
                     if sim_time_delta > 0:
                         # Конвертируем минуты симуляции в реальные секунды для паузы
                         sleep_duration = (sim_time_delta * 60) / settings.SIM_SPEED_FACTOR
-                        # Ограничиваем максимальную паузу 1 секундой
+                        # Ограничиваем максимальную паузу 1 секундой для производительности
                         sleep_duration = min(sleep_duration, 1.0)
                         await asyncio.sleep(sleep_duration)
 

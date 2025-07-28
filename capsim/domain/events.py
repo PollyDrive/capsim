@@ -696,6 +696,12 @@ class SelfDevAction(BaseEvent):
             "time_budget_after": agent.time_budget,
             "timestamp": self.timestamp
         }, default=str))
+        
+        # Планируем проверку влияния саморазвития на trend_receptivity через 30 минут
+        influence_check_time = self.timestamp + 30.0  # 30 минут задержки
+        if engine.should_schedule_future_event(influence_check_time):
+            influence_event = SelfDevelopmentInfluenceEvent(influence_check_time, self.agent_id)
+            engine.add_event(influence_event, EventPriority.TREND, influence_check_time)
 
 
 class SaveDailyTrendEvent(BaseEvent):
@@ -809,18 +815,56 @@ class TrendInfluenceEvent(BaseEvent):
 
     # -------------------- v1.9 helpers --------------------
     @staticmethod
-    def _calculate_reader_effects(sentiment: str, aligned: bool) -> dict[str, float]:
-        """Return attribute deltas based on sentiment matrix from tech_v1.9."""
-        # Восприимчивость (trend_receptivity) - ИСПРАВЛЕНИЕ: Защита от NaN
-        receptivity_delta = 0.01 if (aligned or sentiment == "Negative") else 0.0
+    def _calculate_reader_effects(sentiment: str, aligned: bool, agent_profession: str = None) -> dict[str, float]:
+        """Return attribute deltas based on sentiment matrix from tech_v1.9 with professional differentiation."""
+        
+        # Профессиональные множители для trend_receptivity
+        profession_multipliers = {
+            "Blogger": 1.5,      # высокая восприимчивость
+            "Artist": 1.3,       # творческая натура
+            "Businessman": 1.0,  # базовый уровень
+            "Developer": 0.8,    # техническое мышление
+            "Teacher": 0.7,      # умеренная консервативность
+            "Doctor": 0.5,       # профессиональная осторожность
+            "Unemployed": 1.2,   # больше времени на тренды
+            "Politician": 1.1,   # нужно следить за общественным мнением
+            "SpiritualMentor": 0.6,  # духовная стабильность
+            "Philosopher": 0.8,  # критическое мышление
+            "Worker": 0.9,       # практичность
+            "ShopClerk": 1.0     # средний уровень
+        }
+        
+        # Увеличенная базовая дельта (было 0.01, стало 0.05-0.08)
+        base_receptivity_delta = 0.08 if (aligned or sentiment == "Negative") else 0.0
+        
+        # Применяем профессиональный множитель
+        profession_multiplier = profession_multipliers.get(agent_profession, 1.0)
+        receptivity_delta = base_receptivity_delta * profession_multiplier
+        
+        # Защита от NaN
         if math.isnan(receptivity_delta) or math.isinf(receptivity_delta):
             receptivity_delta = 0.0
 
-        # Энергия
+        # Энергия (без изменений)
         if sentiment == "Positive":
             energy_delta = 0.02 if aligned else 0.015
         else:  # Negative
             energy_delta = -0.015 if aligned else -0.01
+
+        # Логирование изменений trend_receptivity для отслеживания
+        if receptivity_delta != 0.0:
+            from capsim.common.logging_config import get_logger
+            import json
+            logger = get_logger(__name__)
+            logger.debug(json.dumps({
+                "event": "trend_receptivity_change_calculated",
+                "profession": agent_profession,
+                "sentiment": sentiment,
+                "aligned": aligned,
+                "base_delta": base_receptivity_delta,
+                "profession_multiplier": profession_multiplier,
+                "final_delta": receptivity_delta
+            }, default=str))
 
         return {
             "trend_receptivity": receptivity_delta,
@@ -919,8 +963,8 @@ class TrendInfluenceEvent(BaseEvent):
                     interest_value = agent.interests.get(interest_category, 0.0)
                     aligned = interest_value > 3.0
 
-                # Рассчитываем дельты по новой матрице
-                attribute_changes = self._calculate_reader_effects(trend.sentiment, aligned)
+                # Рассчитываем дельты по новой матрице с учетом профессии
+                attribute_changes = self._calculate_reader_effects(trend.sentiment, aligned, agent.profession)
 
                 # Создаем пакет updatestate для агента
                 update_state = {
@@ -933,7 +977,24 @@ class TrendInfluenceEvent(BaseEvent):
                 update_states.append(update_state)
                 
                 # Применяем изменения к агенту
+                old_receptivity = agent.trend_receptivity - attribute_changes.get("trend_receptivity", 0.0)
                 agent.update_state(attribute_changes)
+                
+                # Логируем изменение trend_receptivity для отслеживания
+                if attribute_changes.get("trend_receptivity", 0.0) != 0.0:
+                    logger.info(json.dumps({
+                        "event": "trend_receptivity_changed",
+                        "agent_id": str(agent.id),
+                        "profession": agent.profession,
+                        "trend_id": str(trend.trend_id),
+                        "trend_sentiment": trend.sentiment,
+                        "aligned": aligned,
+                        "old_receptivity": round(old_receptivity, 3),
+                        "new_receptivity": round(agent.trend_receptivity, 3),
+                        "delta": round(attribute_changes["trend_receptivity"], 3),
+                        "reason": "TrendInfluence",
+                        "timestamp": self.timestamp
+                    }, default=str))
                 
                 # Добавляем взаимодействие с трендом
                 trend.add_interaction()
@@ -1029,3 +1090,108 @@ class TrendInfluenceEvent(BaseEvent):
         }, default=str))
 
         # События будут сохранены в batch commit 
+
+
+class SelfDevelopmentInfluenceEvent(BaseEvent):
+    """Событие влияния саморазвития на восприимчивость к трендам."""
+    
+    def __init__(self, timestamp: float, agent_id: UUID):
+        super().__init__(EventPriority.TREND, timestamp)
+        self.agent_id = agent_id
+
+    def process(self, engine):
+        """Обрабатывает влияние саморазвития на trend_receptivity агента."""
+        from capsim.common.logging_config import get_logger
+        import json
+        
+        logger = get_logger(__name__)
+        
+        # Находим агента
+        agent = next((a for a in engine.agents if a.id == self.agent_id), None)
+        if not agent:
+            return
+            
+        # Проверяем активность саморазвития за последние 24 часа
+        recent_selfdev_count = self._count_recent_selfdev_actions(engine, agent.id, self.timestamp)
+        
+        if recent_selfdev_count >= 3:  # Критерий высокой динамики
+            # Профессиональные множители для эффекта саморазвития
+            profession_multipliers = {
+                "Doctor": 1.3,      # усиленный эффект
+                "Teacher": 1.3,     # усиленный эффект
+                "Blogger": 0.7,     # сниженный эффект
+                "Artist": 0.8,      # творческим натурам сложнее снизить восприимчивость
+                "Unemployed": 1.1,  # больше времени на саморазвитие
+            }
+            
+            base_reduction = -0.03  # базовое снижение
+            profession_multiplier = profession_multipliers.get(agent.profession, 1.0)
+            receptivity_delta = base_reduction * profession_multiplier
+            
+            # Применяем изменения
+            attribute_changes = {
+                "trend_receptivity": receptivity_delta
+            }
+            
+            update_state = {
+                "agent_id": agent.id,
+                "attribute_changes": attribute_changes,
+                "reason": "SelfDevelopmentInfluence",
+                "timestamp": self.timestamp
+            }
+            
+            # Применяем изменения к агенту в памяти
+            agent.update_state(attribute_changes)
+            
+            # Обрабатываем через движок
+            engine._process_update_state_batch([update_state])
+            
+            logger.info(json.dumps({
+                "event": "self_development_influence_applied",
+                "agent_id": str(agent.id),
+                "profession": agent.profession,
+                "recent_selfdev_count": recent_selfdev_count,
+                "receptivity_delta": receptivity_delta,
+                "new_receptivity": agent.trend_receptivity,
+                "timestamp": self.timestamp
+            }, default=str))
+    
+    def _count_recent_selfdev_actions(self, engine, agent_id: UUID, current_time: float) -> int:
+        """Подсчитывает количество действий саморазвития за последние 24 часа."""
+        # Ищем в истории действий агента за последние 24 часа (1440 минут)
+        recent_actions = 0
+        lookback_time = current_time - 1440.0  # 24 часа назад
+        
+        # Проверяем в базе данных через репозиторий
+        try:
+            from capsim.db.repositories import PersonRepository
+            repo = PersonRepository(engine.db_session)
+            
+            # Получаем историю действий агента
+            query = """
+                SELECT COUNT(*) as selfdev_count
+                FROM person_action_history 
+                WHERE person_id = :agent_id 
+                AND action_type = 'SelfDev'
+                AND timestamp >= :lookback_time
+                AND success_rate > 0.7
+            """
+            
+            result = engine.db_session.execute(
+                query, 
+                {"agent_id": str(agent_id), "lookback_time": lookback_time}
+            ).fetchone()
+            
+            if result:
+                recent_actions = result.selfdev_count or 0
+                
+        except Exception as e:
+            # Если не удается получить из БД, используем приблизительную оценку
+            # на основе последнего времени саморазвития агента
+            agent = next((a for a in engine.agents if a.id == agent_id), None)
+            if agent and hasattr(agent, 'last_selfdev_ts'):
+                if current_time - agent.last_selfdev_ts < 1440.0:
+                    # Примерная оценка: если последнее действие было недавно
+                    recent_actions = 1
+        
+        return recent_actions

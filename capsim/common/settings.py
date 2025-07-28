@@ -138,19 +138,19 @@ class Settings:
     BATCH_COMMIT_TIMEOUT_SEC: int = int(os.getenv("BATCH_COMMIT_TIMEOUT_SEC", "5"))
     
     # Cache settings
-    CACHE_TTL_MIN: int = int(os.getenv("CACHE_TTL_MIN"))
-    CACHE_MAX_SIZE: int = int(os.getenv("CACHE_MAX_SIZE"))
+    CACHE_TTL_MIN: int = int(os.getenv("CACHE_TTL_MIN", "60"))
+    CACHE_MAX_SIZE: int = int(os.getenv("CACHE_MAX_SIZE", "1024"))
     
     # Trend settings
-    TREND_ARCHIVE_THRESHOLD_DAYS: int = int(os.getenv("TREND_ARCHIVE_THRESHOLD_DAYS"))
+    TREND_ARCHIVE_THRESHOLD_DAYS: int = int(os.getenv("TREND_ARCHIVE_THRESHOLD_DAYS", "7"))
     
     # Monitoring settings
     ENABLE_METRICS: bool = os.getenv("ENABLE_METRICS", "true").lower() == "true"
-    METRICS_PORT: int = int(os.getenv("METRICS_PORT"))
+    METRICS_PORT: int = int(os.getenv("METRICS_PORT", "8000"))
     
     # Logging settings
-    LOG_LEVEL: str = os.getenv("LOG_LEVEL")
-    ENABLE_JSON_LOGS: bool = os.getenv("ENABLE_JSON_LOGS").lower() == "true"
+    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+    ENABLE_JSON_LOGS: bool = os.getenv("ENABLE_JSON_LOGS", "false").lower() == "true"
     
     # Docker integration
     DOCKER_ENV: bool = os.getenv("DOCKER_ENV", "false").lower() == "true"
