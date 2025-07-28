@@ -698,10 +698,15 @@ class SelfDevAction(BaseEvent):
         }, default=str))
         
         # Планируем проверку влияния саморазвития на trend_receptivity через 30 минут
+        # ИСПРАВЛЕНИЕ: Добавляем защиту от слишком частого планирования
         influence_check_time = self.timestamp + 30.0  # 30 минут задержки
-        if engine.should_schedule_future_event(influence_check_time):
+        if (engine.should_schedule_future_event(influence_check_time) and 
+            (not hasattr(agent, '_last_selfdev_influence_scheduled') or
+             influence_check_time - getattr(agent, '_last_selfdev_influence_scheduled', 0) > 60.0)):  # Минимум 60 минут между проверками
+            
             influence_event = SelfDevelopmentInfluenceEvent(influence_check_time, self.agent_id)
             engine.add_event(influence_event, EventPriority.TREND, influence_check_time)
+            agent._last_selfdev_influence_scheduled = influence_check_time
 
 
 class SaveDailyTrendEvent(BaseEvent):
@@ -1158,40 +1163,24 @@ class SelfDevelopmentInfluenceEvent(BaseEvent):
     
     def _count_recent_selfdev_actions(self, engine, agent_id: UUID, current_time: float) -> int:
         """Подсчитывает количество действий саморазвития за последние 24 часа."""
-        # Ищем в истории действий агента за последние 24 часа (1440 минут)
-        recent_actions = 0
-        lookback_time = current_time - 1440.0  # 24 часа назад
-        
-        # Проверяем в базе данных через репозиторий
+        # ИСПРАВЛЕНИЕ: Упрощенная логика для избежания зависания
+        # Используем только информацию из памяти агента
         try:
-            from capsim.db.repositories import PersonRepository
-            repo = PersonRepository(engine.db_session)
-            
-            # Получаем историю действий агента
-            query = """
-                SELECT COUNT(*) as selfdev_count
-                FROM person_action_history 
-                WHERE person_id = :agent_id 
-                AND action_type = 'SelfDev'
-                AND timestamp >= :lookback_time
-                AND success_rate > 0.7
-            """
-            
-            result = engine.db_session.execute(
-                query, 
-                {"agent_id": str(agent_id), "lookback_time": lookback_time}
-            ).fetchone()
-            
-            if result:
-                recent_actions = result.selfdev_count or 0
-                
-        except Exception as e:
-            # Если не удается получить из БД, используем приблизительную оценку
-            # на основе последнего времени саморазвития агента
             agent = next((a for a in engine.agents if a.id == agent_id), None)
-            if agent and hasattr(agent, 'last_selfdev_ts'):
-                if current_time - agent.last_selfdev_ts < 1440.0:
-                    # Примерная оценка: если последнее действие было недавно
-                    recent_actions = 1
-        
-        return recent_actions
+            if not agent:
+                return 0
+                
+            # Простая эвристика: если агент недавно делал саморазвитие, считаем что он активен
+            if hasattr(agent, 'last_selfdev_ts') and agent.last_selfdev_ts:
+                time_since_last = current_time - agent.last_selfdev_ts
+                if time_since_last < 120.0:  # Последние 2 часа
+                    return 4  # Считаем высокой активностью
+                elif time_since_last < 480.0:  # Последние 8 часов  
+                    return 2  # Средняя активность
+                else:
+                    return 0  # Низкая активность
+            
+            return 0
+        except Exception as e:
+            # В случае любой ошибки возвращаем 0 чтобы не блокировать симуляцию
+            return 0

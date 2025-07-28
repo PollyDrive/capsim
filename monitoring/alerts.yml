@@ -337,4 +337,15 @@ groups:
             Рекомендации:
             - Увеличить SIM_SPEED_FACTOR для ускорения
             - Уменьшить количество агентов
-            - Оптимизировать настройки батчинга 
+            - Оптимизировать настройки батчинга
+
+  - name: CAPSIM Attribute Alerts
+    rules:
+      - alert: MassiveFinancialDrop
+        expr: |
+          (avg(capsim_financial_capability_end) - avg(capsim_financial_capability_start)) / avg(capsim_financial_capability_start) * 100 < -30
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Massive financial drop detected"
