@@ -840,7 +840,7 @@ class TrendInfluenceEvent(BaseEvent):
         }
         
         # Увеличенная базовая дельта (было 0.01, стало 0.05-0.08)
-        base_receptivity_delta = 0.08 if (aligned or sentiment == "Negative") else 0.0
+        base_receptivity_delta = 0.1 if (aligned or sentiment == "Negative") else 0.05
         
         # Применяем профессиональный множитель
         profession_multiplier = profession_multipliers.get(agent_profession, 1.0)
@@ -947,7 +947,7 @@ class TrendInfluenceEvent(BaseEvent):
         influenced_agents_count = 0
         
         # ИСПРАВЛЕНИЕ: Радикально уменьшаем вероятность ответа, чтобы остановить лавину
-        likeliness_to_respond = 0.05  # было 0.2
+        likeliness_to_respond = 0.1  # было 0.2
         
         for agent in potential_audience:
             if agent.id == trend.originator_id:
@@ -1000,6 +1000,20 @@ class TrendInfluenceEvent(BaseEvent):
                         "reason": "TrendInfluence",
                         "timestamp": self.timestamp
                     }, default=str))
+                    
+                    # Сохраняем изменение trend_receptivity в историю
+                    engine.add_to_batch_update({
+                        "type": "history",
+                        "simulation_id": engine.simulation_id,
+                        "person_id": agent.id,
+                        "attribute_name": "trend_receptivity",
+                        "old_value": old_receptivity,
+                        "new_value": agent.trend_receptivity,
+                        "change_timestamp": self.timestamp,
+                        "action_timestamp": self.timestamp,
+                        "reason": "TrendInfluence",
+                        "source_trend_id": trend.trend_id
+                    })
                 
                 # Добавляем взаимодействие с трендом
                 trend.add_interaction()
@@ -1160,6 +1174,22 @@ class SelfDevelopmentInfluenceEvent(BaseEvent):
                 "new_receptivity": agent.trend_receptivity,
                 "timestamp": self.timestamp
             }, default=str))
+            
+            # Сохраняем изменение trend_receptivity в историю
+            if receptivity_delta != 0.0:
+                old_receptivity = agent.trend_receptivity - receptivity_delta
+                engine.add_to_batch_update({
+                    "type": "history",
+                    "simulation_id": engine.simulation_id,
+                    "person_id": agent.id,
+                    "attribute_name": "trend_receptivity",
+                    "old_value": old_receptivity,
+                    "new_value": agent.trend_receptivity,
+                    "change_timestamp": self.timestamp,
+                    "action_timestamp": self.timestamp,
+                    "reason": "SelfDevelopment",
+                    "source_trend_id": None
+                })
     
     def _count_recent_selfdev_actions(self, engine, agent_id: UUID, current_time: float) -> int:
         """Подсчитывает количество действий саморазвития за последние 24 часа."""

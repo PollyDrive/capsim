@@ -9,6 +9,7 @@ import sys
 import json
 import logging
 from typing import Optional
+import yaml
 
 # For test mode use in-memory repository
 from types import SimpleNamespace
@@ -21,6 +22,11 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+def load_simulation_config():
+    """Loads simulation configuration from config/simulation.yaml."""
+    config_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config', 'simulation.yaml')
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
 
 async def run_simulation_cli(
     num_agents: int = 100,
@@ -43,8 +49,6 @@ async def run_simulation_cli(
     print(f"⏱️  Продолжительность: {duration_days} дней")
     print(f"⚡ Скорость симуляции: {sim_speed_factor}x")
     
-    # Проверяем доступность зависимостей
-    # Устанавливаем SIM_SPEED_FACTOR ПЕРЕД импортом движка, чтобы settings подтянули корректное значение
     os.environ["SIM_SPEED_FACTOR"] = str(sim_speed_factor)
 
     try:
@@ -55,7 +59,6 @@ async def run_simulation_cli(
         print(f"❌ Ошибка импорта: {e}")
         return
     
-    # URL базы данных
     if not database_url:
         database_url = os.getenv("DATABASE_URL")
         if not database_url:
@@ -64,23 +67,21 @@ async def run_simulation_cli(
     print(f"🗄️  База данных: {database_url}")
     
     try:
-        # SIM_SPEED_FACTOR уже установлен выше
-        
-        # Подмена репозитория на in-memory в тестовом режиме
-        if database_url and database_url.startswith("sqlite+aiosqlite"):  # тестовый режим
-            from reports.demo_simulation import _InMemoryRepo as DatabaseRepository  # type: ignore
+        if database_url and database_url.startswith("sqlite+aiosqlite"): 
+            from reports.demo_simulation import _InMemoryRepo as DatabaseRepository
         else:
-            DatabaseRepository = _RealRepository  # type: ignore
+            DatabaseRepository = _RealRepository
         
-        # Создаем репозиторий и движок
         if DatabaseRepository is _RealRepository:
             db_repo = DatabaseRepository(database_url)
         else:
             db_repo = DatabaseRepository()
+        
+        simulation_config = load_simulation_config()
         engine = SimulationEngine(db_repo)
         
         print("\n🔄 Инициализация симуляции...")
-        await engine.initialize(num_agents=num_agents, duration_days=duration_days)
+        await engine.initialize(num_agents=num_agents, duration_days=duration_days, config=simulation_config)
         
         print(f"✅ Создано агентов: {len(engine.agents)}")
         print(f"✅ Системных событий: {len(engine.event_queue)}")
@@ -88,13 +89,10 @@ async def run_simulation_cli(
         
         print(f"\n▶️  Запуск симуляции на {duration_days} дней...")
         
-        # Запускаем симуляцию
         await engine.run_simulation()
         
-        # Финальная статистика
         final_stats = engine.get_simulation_stats()
         
-        # Импортируем функцию конвертации времени
         from ..common.time_utils import convert_sim_time_to_human, format_simulation_time_detailed
         
         print("\n📈 Результаты симуляции:")
@@ -108,7 +106,6 @@ async def run_simulation_cli(
         
         print("\n✅ Симуляция завершена успешно!")
         
-        # Закрываем соединение с БД
         await db_repo.close()
         
     except Exception as e:
@@ -116,7 +113,6 @@ async def run_simulation_cli(
         import traceback
         traceback.print_exc()
         
-        # Попытка graceful shutdown
         try:
             await engine.shutdown()
             await db_repo.close()
@@ -124,7 +120,6 @@ async def run_simulation_cli(
             pass
         
         raise
-
 
 def main():
     """Main CLI entry point."""
@@ -140,11 +135,10 @@ def main():
     
     args = parser.parse_args()
     
-    # Режим тестирования
     if args.test:
         print("🧪 Режим тестирования - мини-симуляция")
         args.agents = 10
-        args.days = 60/1440  # 60 минут
+        args.days = 60/1440
     
     try:
         asyncio.run(run_simulation_cli(
@@ -162,4 +156,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main() 
+    main()

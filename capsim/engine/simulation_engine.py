@@ -120,13 +120,14 @@ class SimulationEngine:
             if not hasattr(self.db_repo, _name):
                 setattr(self.db_repo, _name, _noop)
         
-    async def initialize(self, num_agents: int = 1000, duration_days: float = 1.0) -> None:
+    async def initialize(self, num_agents: int = 1000, duration_days: float = 1.0, config: dict = None) -> None:
         """
         Инициализирует симуляцию с заданным количеством агентов.
         
         Args:
             num_agents: Количество агентов для симуляции
             duration_days: Продолжительность симуляции в днях
+            config: Словарь с конфигурацией симуляции из YAML-файла.
         """
         if self.simulation_id:
             raise RuntimeError("Simulation already initialized")
@@ -160,11 +161,7 @@ class SimulationEngine:
         simulation_run = await self.db_repo.create_simulation_run(
             num_agents=num_agents,
             duration_days=duration_days,
-            configuration={
-                "realtime_mode": settings.ENABLE_REALTIME,
-                "speed_factor": settings.SIM_SPEED_FACTOR,
-                "batch_size": settings.BATCH_SIZE
-            }
+            configuration=config # Pass the entire config here
         )
         self.simulation_id = simulation_run.run_id  # ИСПРАВЛЕНИЕ: извлекаем ID из объекта
         
@@ -184,6 +181,15 @@ class SimulationEngine:
         
         # Загрузить affinity map из БД
         self.affinity_map = await self.db_repo.load_affinity_map()
+        
+        # Синхронизировать конфигурацию профессий из YAML в БД
+        professions_config = config.get('professions', {}) if config else {}
+        if professions_config:
+            await self.db_repo.sync_profession_config_from_yaml(professions_config)
+            logger.info(json.dumps({
+                "event": "profession_config_synced",
+                "professions_count": len(professions_config),
+            }))
         
         # Загрузить диапазоны атрибутов профессий из статичной таблицы
         self.profession_attr_ranges = await self.db_repo.get_profession_attribute_ranges()
