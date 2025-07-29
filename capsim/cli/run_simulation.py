@@ -99,12 +99,32 @@ async def run_simulation_cli(
         print(f"  Время выполнения: {final_stats['current_time']:.1f} минут ({format_simulation_time_detailed(final_stats['current_time'])})")
         print(f"  Активных агентов: {final_stats['active_agents']}/{final_stats['total_agents']}")
         print(f"  Созданных трендов: {final_stats['active_trends']}")
+        print(f"  📅 Создано событий: {final_stats.get('events_created', 0)}")
+        print(f"  ✅ Обработано событий: {final_stats.get('events_processed', 0)}")
+        print(f"  ⏳ Событий в очереди: {final_stats.get('events_in_queue', 0)}")
         print(f"  Среднее действий/агент/час: {final_stats.get('avg_actions_per_agent_per_hour', 0):.2f}")
         print(f"  Всего покупок: {final_stats.get('total_purchases', 0)}")
         print(f"  Всего саморазвитий: {final_stats.get('total_selfdev', 0)}")
         print(f"  ID симуляции: {final_stats['simulation_id']}")
         
-        print("\n✅ Симуляция завершена успешно!")
+        # Проверяем корректность завершения
+        events_created = final_stats.get('events_created', 0)
+        events_processed = final_stats.get('events_processed', 0)
+        events_in_queue = final_stats.get('events_in_queue', 0)
+        
+        if events_in_queue > 0:
+            print(f"\n⚠️  Внимание: {events_in_queue} событий осталось в очереди")
+            print("   Симуляция завершилась до обработки всех событий")
+        
+        if events_processed < events_created:
+            print(f"\n⚠️  Внимание: Обработано {events_processed} из {events_created} созданных событий")
+            completion_rate = (events_processed / events_created * 100) if events_created > 0 else 0
+            print(f"   Процент завершения: {completion_rate:.1f}%")
+        
+        if events_processed == events_created and events_in_queue == 0:
+            print("\n✅ Симуляция завершена успешно! Все события обработаны.")
+        else:
+            print("\n✅ Симуляция завершена.")
         
         await db_repo.close()
         

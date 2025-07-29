@@ -52,6 +52,7 @@ class Person:
     last_post_ts: Optional[float] = None  # Last post timestamp
     last_selfdev_ts: Optional[float] = None  # Last self-development timestamp
     last_purchase_ts: Dict[str, Optional[float]] = field(default_factory=dict)  # {L1: timestamp, L2: timestamp, L3: timestamp}
+    last_attribute_change_ts: Dict[str, Optional[float]] = field(default_factory=dict)  # {attribute_name: timestamp}
     
     # Simulation metadata
     simulation_id: Optional[UUID] = None
@@ -185,7 +186,7 @@ class Person:
             return (
                 self.energy_level >= 0.5 and
                 self.time_budget >= 0.5 and  # Снижено с 1 до 0.5
-                self.trend_receptivity > 0
+                self.trend_receptivity >= 0.01
             )
             
         return False
@@ -491,7 +492,7 @@ class Person:
                     post_score = 0.3
                 else:
                     post_score = (
-                        virality * self.trend_receptivity / 25  # Согласно ТЗ
+                        virality * (self.trend_receptivity + 0.5) / 25  # Add a small constant to trend_receptivity
                         * (1 + self.social_status / 10)  # Согласно ТЗ
                     )
             else:

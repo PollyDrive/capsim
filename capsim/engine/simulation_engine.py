@@ -17,7 +17,8 @@ from ..domain.person import Person
 from ..domain.trend import Trend
 from ..domain.events import (
     BaseEvent, EventPriority, PublishPostAction, PurchaseAction, SelfDevAction,
-    EnergyRecoveryEvent, DailyResetEvent, SaveDailyTrendEvent, NightRecoveryEvent
+    EnergyRecoveryEvent, DailyResetEvent, SaveDailyTrendEvent, NightRecoveryEvent,
+    should_save_attribute_change
 )
 from ..common.clock import Clock, create_clock
 from ..common.settings import settings
@@ -72,6 +73,10 @@ class SimulationEngine:
         self._last_commit_time: float = 0.0
         self._last_batch_commit: float = 0.0
         self._simulation_start_real: float = 0.0
+        
+        # Event tracking
+        self._events_processed: int = 0
+        self._events_created: int = 0
         
         # ИСПРАВЛЕНИЕ: Агрегация batch updates для оптимизации производительности
         self._aggregated_updates: Dict[str, Dict] = {}  # person_id -> aggregated_update
@@ -527,13 +532,25 @@ class SimulationEngine:
         try:
             last_time_update = self.current_time
             stagnation_counter = 0
-            events_processed = 0  # Счетчик обработанных событий
 
             # ИСПРАВЛЕНИЕ: Основной цикл должен завершаться по времени симуляции
+            termination_reason = None
             while self._running and self.current_time < end_time:
+                
+                # Проверяем, не была ли симуляция остановлена принудительно
+                if not self._running:
+                    termination_reason = "stopped_by_user"
+                    logger.info(json.dumps({
+                        "event": "simulation_stopped_by_user",
+                        "simulation_time": self.current_time,
+                        "target_end_time": end_time,
+                        "msg": "Simulation stopped by user request."
+                    }, default=str))
+                    break
                 
                 # Проверяем достижение целевого времени с точностью до секунды
                 if self.current_time >= end_time:
+                    termination_reason = "time_limit_reached"
                     logger.info(json.dumps({
                         "event": "simulation_time_limit_reached_gracefully",
                         "simulation_time": self.current_time,
@@ -565,6 +582,7 @@ class SimulationEngine:
                             }, default=str))
                         continue
                     else:
+                        termination_reason = "no_more_events"
                         logger.info(json.dumps({
                             "event": "event_queue_empty_simulation_complete",
                             "simulation_time": self.current_time,
@@ -579,6 +597,7 @@ class SimulationEngine:
 
                 # Проверяем, не вышли ли мы за пределы времени симуляции
                 if event_timestamp > end_time:
+                    termination_reason = "next_event_past_end_time"
                     logger.info(json.dumps({
                         "event": "simulation_time_limit_reached",
                         "simulation_time": self.current_time,
@@ -606,7 +625,7 @@ class SimulationEngine:
                 self.current_time = event_timestamp
                 
                 await self._process_event(priority_event.event)
-                events_processed += 1  # Увеличиваем счетчик обработанных событий
+                self._events_processed += 1  # Увеличиваем счетчик обработанных событий
                 
                 # Проверить batch commit
                 if self._should_commit_batch():
@@ -618,11 +637,12 @@ class SimulationEngine:
                 agent_actions_scheduled += scheduled
                 
         except Exception as e:
+            termination_reason = "error"
             logger.error(json.dumps({
                 "event": "simulation_error",
                 "error": str(e),
                 "current_time": self.current_time,
-                "events_processed": events_processed
+                "events_processed": self._events_processed
             }, default=str))
             raise
         finally:
@@ -631,11 +651,15 @@ class SimulationEngine:
                 len(self._aggregated_updates) +
                 len(self._aggregated_history) +
                 len(self._aggregated_trends) +
-                len(self._aggregated_trend_creations)
+                len(self._aggregated_trend_creations) +
+                len(self._aggregated_events)
             )
             logger.info(json.dumps({
                 "event": "final_batch_commit_starting",
                 "pending_updates": pending_updates,
+                "pending_events": len(self._aggregated_events),
+                "events_processed": self._events_processed,
+                "events_created": self._events_created,
                 "current_time": self.current_time
             }, default=str))
             await self._batch_commit_states()
@@ -659,6 +683,10 @@ class SimulationEngine:
                 "simulation_id": str(self.simulation_id),
                 "final_sim_time": self.current_time,
                 "final_human_time": human_time,
+                "events_processed": self._events_processed,
+                "events_created": self._events_created,
+                "events_remaining_in_queue": len(self.event_queue),
+                "termination_reason": termination_reason or "unknown",
                 "real_duration_sec": time.time() - self._simulation_start_real
             }, default=str))
 
@@ -1203,8 +1231,8 @@ class SimulationEngine:
                 else:
                     new_value = old_value + delta
                 setattr(agent, attr_name, new_value)
-                # ИСПРАВЛЕНИЕ: Сохраняем только значимые изменения атрибутов (delta >= 0.1)
-                if abs(delta) >= 0.1:
+                # Сохраняем только значимые изменения атрибутов
+                if should_save_attribute_change(attr_name, delta, update_state["reason"]):
                     history_record = {
                         "type": "attribute_history",
                         "person_id": agent_id,
@@ -1948,6 +1976,7 @@ class SimulationEngine:
         
         priority_event = PriorityEvent(priority, timestamp, event)
         heapq.heappush(self.event_queue, priority_event)
+        self._events_created += 1  # Увеличиваем счетчик созданных событий
         
     def add_to_batch_update(self, update: Dict[str, Any]) -> None:
         """Добавляет обновление в batch очередь с агрегацией."""
@@ -1956,9 +1985,25 @@ class SimulationEngine:
         # ИСПРАВЛЕНИЕ: Убираем обработку person_state - не обновляем таблицу persons
         # Все изменения атрибутов сохраняются только в person_attribute_history
         
-        if update_type == "attribute_history":
+        if update_type == "attribute_history" or update_type == "history":
             # Сохраняем все записи истории (не агрегируем)
             self._aggregated_history.append(update)
+            
+            # DEBUG: Логируем добавление записей trend_receptivity
+            if update.get("attribute_name") == "trend_receptivity":
+                from capsim.common.logging_config import get_logger
+                import json
+                logger = get_logger(__name__)
+                logger.info(json.dumps({
+                    "event": "trend_receptivity_added_to_batch",
+                    "person_id": str(update.get("person_id")),
+                    "old_value": update.get("old_value"),
+                    "new_value": update.get("new_value"),
+                    "delta": update.get("delta"),
+                    "reason": update.get("reason"),
+                    "timestamp": update.get("change_timestamp"),
+                    "batch_size": len(self._aggregated_history)
+                }, default=str))
             
         elif update_type == "trend_interaction":
             # Агрегируем взаимодействия с трендами
@@ -2047,15 +2092,42 @@ class SimulationEngine:
             # 2. Обновления истории атрибутов
             if self._aggregated_history:
                 from ..db.models import PersonAttributeHistory
+                
+                # DEBUG: Логируем количество записей истории
+                logger.info(json.dumps({
+                    "event": "saving_attribute_history",
+                    "total_records": len(self._aggregated_history),
+                    "trend_receptivity_records": len([h for h in self._aggregated_history if h.get("attribute_name") == "trend_receptivity"])
+                }, default=str))
+                
                 # Очищаем историю от полей, которых нет в модели
                 history_cleaned = []
                 for hr in self._aggregated_history:
                     cleaned_hr = hr.copy()
                     cleaned_hr.pop("type", None) # Удаляем ключ 'type', если он есть
+                    cleaned_hr.pop("action_timestamp", None) # Удаляем ключ 'action_timestamp', если он есть (только для events)
                     history_cleaned.append(cleaned_hr)
+                    
+                    # DEBUG: Логируем каждую запись trend_receptivity
+                    if cleaned_hr.get("attribute_name") == "trend_receptivity":
+                        logger.info(json.dumps({
+                            "event": "saving_trend_receptivity_record",
+                            "person_id": str(cleaned_hr.get("person_id")),
+                            "old_value": cleaned_hr.get("old_value"),
+                            "new_value": cleaned_hr.get("new_value"),
+                            "delta": cleaned_hr.get("delta"),
+                            "reason": cleaned_hr.get("reason"),
+                            "timestamp": cleaned_hr.get("change_timestamp")
+                        }, default=str))
                 
                 history_models = [PersonAttributeHistory(**hr) for hr in history_cleaned]
                 await self.db_repo.bulk_create_person_attribute_history(history_models)
+                
+                # DEBUG: Подтверждаем сохранение
+                logger.info(json.dumps({
+                    "event": "attribute_history_saved",
+                    "records_saved": len(history_models)
+                }, default=str))
 
             # 3. ИСПРАВЛЕНИЕ: Убираем обновления состояний агентов - не обновляем таблицу persons
             # Все изменения атрибутов сохраняются только в person_attribute_history
@@ -2196,7 +2268,11 @@ class SimulationEngine:
             "total_purchases": total_purchases,
             "total_selfdev": total_selfdev,
             "avg_actions_per_agent_per_hour": round(avg_actions_per_agent_per_hour, 2),
-            "simulation_hours": round(simulation_hours, 1)
+            "simulation_hours": round(simulation_hours, 1),
+            # Статистика событий
+            "events_processed": self._events_processed,
+            "events_created": self._events_created,
+            "events_in_queue": len(self.event_queue)
         }
         
     async def shutdown(self) -> None:

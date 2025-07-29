@@ -19,6 +19,37 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def should_save_attribute_change(attribute_name: str, delta: float, reason: str) -> bool:
+    """
+    Определяет, стоит ли сохранять изменение атрибута в историю.
+    Фильтрует незначительные изменения для предотвращения лавины событий.
+    """
+    # Ужесточенные пороги для сохранения изменений
+    min_thresholds = {
+        "energy_level": 0.5,        # Только очень значительные изменения энергии
+        "financial_capability": 0.4, # Только очень значительные финансовые изменения
+        "social_status": 0.4,       # Только очень значительные изменения статуса
+        "trend_receptivity": 0.6,   # Только очень значительные изменения восприимчивости
+        "time_budget": 0.8          # Только очень значительные изменения времени
+    }
+    
+    # Особые случаи для определенных причин
+    if reason in ["MorningRecovery", "EnergyRecovery"]:
+        # Для восстановления сохраняем только с вероятностью 2%
+        return random.random() < 0.02
+    
+    if reason.startswith("Purchase"):
+        # Для покупок сохраняем только значительные изменения или с вероятностью 3%
+        return abs(delta) >= min_thresholds.get(attribute_name, 0.4) or random.random() < 0.03
+    
+    if reason in ["SelfDevAction", "TrendInfluence"]:
+        # Для саморазвития и трендов сохраняем только значительные изменения или с вероятностью 5%
+        return abs(delta) >= min_thresholds.get(attribute_name, 0.4) or random.random() < 0.05
+    
+    # По умолчанию сохраняем только очень значительные изменения
+    return abs(delta) >= min_thresholds.get(attribute_name, 0.4)
+
+
 class EventPriority(IntEnum):
     """Event priority levels for v1.8 priority queue system."""
     SYSTEM = 100       # DailyResetEvent, EnergyRecoveryEvent - highest priority
@@ -106,11 +137,11 @@ class PublishPostAction(BaseEvent):
             return
         
         # v2.0: Применить затраты энергии за действие
-        try:
-            from ..common.economic_balance import economic_balance_manager
-            energy_cost = economic_balance_manager.apply_energy_cost(agent, "post")
-        except ImportError:
-            energy_cost = 0.0
+        # try:
+        #     from ..common.economic_balance import economic_balance_manager
+        #     energy_cost = economic_balance_manager.apply_energy_cost(agent, "post")
+        # except ImportError:
+        #     energy_cost = 0.0
             
         # Создать новый тренд
         from ..domain.trend import Trend, CoverageLevel
@@ -253,19 +284,20 @@ class EnergyRecoveryEvent(BaseEvent):
                 agent.energy_level = min(5, agent.energy_level + recovery_amount)
                 self.recovered_agent_ids.append(str(agent.id))
                 
-                # ИСПРАВЛЕНИЕ: Создаем запись в person_attribute_history
-                engine.add_to_batch_update({
-                    "type": "attribute_history",
-                    "person_id": agent.id,
-                    "simulation_id": engine.simulation_id,
-                    "attribute_name": "energy_level",
-                    "old_value": old_energy,
-                    "new_value": agent.energy_level,
-                    "delta": recovery_amount,
-                    "reason": "EnergyRecovery",
-                    "source_trend_id": None,
-                    "change_timestamp": self.timestamp
-                })
+                # Создаем запись в person_attribute_history только для значимых изменений
+                if should_save_attribute_change("energy_level", recovery_amount, "EnergyRecovery"):
+                    engine.add_to_batch_update({
+                        "type": "attribute_history",
+                        "person_id": agent.id,
+                        "simulation_id": engine.simulation_id,
+                        "attribute_name": "energy_level",
+                        "old_value": old_energy,
+                        "new_value": agent.energy_level,
+                        "delta": recovery_amount,
+                        "reason": "EnergyRecovery",
+                        "source_trend_id": None,
+                        "change_timestamp": self.timestamp
+                    })
         
         # ИСПРАВЛЕНИЕ: Проверяем время окончания симуляции перед планированием следующего события
         next_timestamp = self.timestamp + 5
@@ -354,20 +386,21 @@ class MorningRecoveryEvent(BaseEvent):
             # ИСПРАВЛЕНИЕ: Убираем person_state update - не обновляем таблицу persons
             # Все изменения атрибутов сохраняются только в person_attribute_history
 
-            # Add attribute_history for each change
+            # Add attribute_history only for significant changes
             for attr, delta in changes.items():
-                engine.add_to_batch_update({
-                    "type": "attribute_history",
-                    "person_id": agent.id,
-                    "simulation_id": engine.simulation_id,
-                    "attribute_name": attr,
-                    "old_value": getattr(agent, attr) - delta,
-                    "new_value": getattr(agent, attr),
-                    "delta": delta,
-                    "reason": "MorningRecovery",
-                    "source_trend_id": None,
-                    "change_timestamp": self.timestamp
-                })
+                if should_save_attribute_change(attr, delta, "MorningRecovery"):
+                    engine.add_to_batch_update({
+                        "type": "attribute_history",
+                        "person_id": agent.id,
+                        "simulation_id": engine.simulation_id,
+                        "attribute_name": attr,
+                        "old_value": getattr(agent, attr) - delta,
+                        "new_value": getattr(agent, attr),
+                        "delta": delta,
+                        "reason": "MorningRecovery",
+                        "source_trend_id": None,
+                        "change_timestamp": self.timestamp
+                    })
             recovered += 1
 
         # ИСПРАВЛЕНИЕ: Проверяем время окончания симуляции перед планированием следующего события
@@ -531,11 +564,11 @@ class PurchaseAction(BaseEvent):
             return
         
         # v2.0: Применить затраты энергии за действие
-        try:
-            from ..common.economic_balance import economic_balance_manager
-            energy_cost = economic_balance_manager.apply_energy_cost(agent, f"purchase_{self.purchase_level}")
-        except ImportError:
-            energy_cost = 0.0
+        # try:
+        #     from ..common.economic_balance import economic_balance_manager
+        #     energy_cost = economic_balance_manager.apply_energy_cost(agent, f"purchase_{self.purchase_level}")
+        # except ImportError:
+        #     energy_cost = 0.0
             
         # Получаем эффекты для данного уровня покупки согласно ТЗ v1.9
         effects = action_config.effects["PURCHASE"][self.purchase_level]
@@ -576,22 +609,22 @@ class PurchaseAction(BaseEvent):
         except ImportError:
             pass
         
-        # ИСПРАВЛЕНИЕ: Создаем записи в person_attribute_history для каждого измененного атрибута
-        # Сохраняем изменения атрибутов в историю
+        # Сохраняем изменения атрибутов в историю только для значимых изменений
         for attr_name, delta in purchase_effects.items():
-            old_value = getattr(agent, attr_name) - delta
-            engine.add_to_batch_update({
-                "type": "attribute_history",
-                "person_id": self.agent_id,
-                "simulation_id": engine.simulation_id,
-                "attribute_name": attr_name,
-                "old_value": old_value,
-                "new_value": getattr(agent, attr_name),
-                "delta": delta,
-                "reason": f"PurchaseAction_{self.purchase_level}",
-                "source_trend_id": None,
-                "change_timestamp": self.timestamp
-            })
+            if should_save_attribute_change(attr_name, delta, f"PurchaseAction_{self.purchase_level}"):
+                old_value = getattr(agent, attr_name) - delta
+                engine.add_to_batch_update({
+                    "type": "attribute_history",
+                    "person_id": self.agent_id,
+                    "simulation_id": engine.simulation_id,
+                    "attribute_name": attr_name,
+                    "old_value": old_value,
+                    "new_value": getattr(agent, attr_name),
+                    "delta": delta,
+                    "reason": f"PurchaseAction_{self.purchase_level}",
+                    "source_trend_id": None,
+                    "change_timestamp": self.timestamp
+                })
         
         # Обновляем только tracking атрибуты в simulation_participants
         engine.add_to_batch_update({
@@ -607,6 +640,59 @@ class PurchaseAction(BaseEvent):
         from ..common.metrics import record_action
         record_action("Purchase", self.purchase_level, agent.profession)
         
+        # Покупки влияют на trend_receptivity
+        # Дорогие покупки (L3) повышают восприимчивость к трендам, дешевые (L1) снижают
+        receptivity_change = 0.0
+        if self.purchase_level == "L3":
+            receptivity_change = 0.05  # дорогие покупки повышают статус и восприимчивость
+        elif self.purchase_level == "L2":
+            receptivity_change = 0.02  # средние покупки слегка повышают
+        elif self.purchase_level == "L1":
+            receptivity_change = -0.01  # дешевые покупки могут снижать статус
+        
+        if receptivity_change != 0.0:
+            old_receptivity = agent.trend_receptivity
+            agent.trend_receptivity = max(1.0, min(5.0, agent.trend_receptivity + receptivity_change))
+            
+            # Сохраняем изменения trend_receptivity с очень низкой частотой (в 30-50 раз реже)
+            save_probability = {"L3": 0.03, "L2": 0.005, "L1": 0.001}
+            should_save = random.random() < save_probability.get(self.purchase_level, 0.001)
+            
+            if should_save:
+                # Сохраняем изменение в историю
+                delta = agent.trend_receptivity - old_receptivity
+                engine.add_to_batch_update({
+                    "type": "history",
+                    "simulation_id": engine.simulation_id,
+                    "person_id": agent.id,
+                    "attribute_name": "trend_receptivity",
+                    "old_value": old_receptivity,
+                    "new_value": agent.trend_receptivity,
+                    "delta": delta,
+                    "change_timestamp": self.timestamp,
+                    "reason": f"Purchase_{self.purchase_level}",
+                    "source_trend_id": None
+                })
+                
+                logger.info(json.dumps({
+                    "event": "purchase_trend_receptivity_change",
+                    "agent_id": str(self.agent_id),
+                    "profession": agent.profession,
+                    "purchase_level": self.purchase_level,
+                    "old_receptivity": old_receptivity,
+                    "new_receptivity": agent.trend_receptivity,
+                    "change": receptivity_change,
+                    "timestamp": self.timestamp,
+                    "saved": True
+                }, default=str))
+            else:
+                logger.debug(json.dumps({
+                    "event": "purchase_trend_receptivity_change_skipped",
+                    "purchase_level": self.purchase_level,
+                    "change": receptivity_change,
+                    "timestamp": self.timestamp
+                }, default=str))
+
         logger.info(json.dumps({
             "event": "purchase_completed",
             "agent_id": str(self.agent_id),
@@ -659,22 +745,22 @@ class SelfDevAction(BaseEvent):
         except ImportError:
             pass
         
-        # ИСПРАВЛЕНИЕ: Создаем записи в person_attribute_history для каждого измененного атрибута
-        # Сохраняем изменения атрибутов в историю
+        # Сохраняем изменения атрибутов в историю только для значимых изменений
         for attr_name, delta in effects.items():
-            old_value = getattr(agent, attr_name) - delta
-            engine.add_to_batch_update({
-                "type": "attribute_history",
-                "person_id": self.agent_id,
-                "simulation_id": engine.simulation_id,
-                "attribute_name": attr_name,
-                "old_value": old_value,
-                "new_value": getattr(agent, attr_name),
-                "delta": delta,
-                "reason": "SelfDevAction",
-                "source_trend_id": None,
-                "change_timestamp": self.timestamp
-            })
+            if should_save_attribute_change(attr_name, delta, "SelfDevAction"):
+                old_value = getattr(agent, attr_name) - delta
+                engine.add_to_batch_update({
+                    "type": "attribute_history",
+                    "person_id": self.agent_id,
+                    "simulation_id": engine.simulation_id,
+                    "attribute_name": attr_name,
+                    "old_value": old_value,
+                    "new_value": getattr(agent, attr_name),
+                    "delta": delta,
+                    "reason": "SelfDevAction",
+                    "source_trend_id": None,
+                    "change_timestamp": self.timestamp
+                })
         
         # Обновляем только tracking атрибуты в simulation_participants
         engine.add_to_batch_update({
@@ -820,31 +906,61 @@ class TrendInfluenceEvent(BaseEvent):
 
     # -------------------- v1.9 helpers --------------------
     @staticmethod
-    def _calculate_reader_effects(sentiment: str, aligned: bool, agent_profession: str = None) -> dict[str, float]:
+    def _calculate_reader_effects(sentiment: str, aligned: bool, agent_profession: str = None, engine=None) -> dict[str, float]:
         """Return attribute deltas based on sentiment matrix from tech_v1.9 with professional differentiation."""
         
-        # Профессиональные множители для trend_receptivity (сбалансированы)
+        # Профессиональные множители для trend_receptivity (увеличены для более активных изменений)
         profession_multipliers = {
-            "Blogger": 1.3,      # высокая восприимчивость (снижено с 1.5)
-            "Artist": 1.2,       # творческая натура (снижено с 1.3)
-            "Unemployed": 1.2,   # больше времени на тренды
-            "Politician": 1.1,   # нужно следить за общественным мнением
-            "Businessman": 1.0,  # базовый уровень
-            "ShopClerk": 1.0,    # средний уровень
-            "Worker": 1.0,       # практичность (повышено с 0.9)
-            "Developer": 0.9,    # техническое мышление (повышено с 0.8)
-            "Teacher": 0.9,      # умеренная консервативность (повышено с 0.7)
-            "Philosopher": 0.9,  # критическое мышление (повышено с 0.8)
-            "SpiritualMentor": 0.8,  # духовная стабильность (повышено с 0.6)
-            "Doctor": 0.8        # профессиональная осторожность (повышено с 0.5)
+            "Blogger": 1.8,      # очень высокая восприимчивость
+            "Artist": 1.6,       # творческая натура, высокая восприимчивость
+            "Unemployed": 1.5,   # много времени на тренды
+            "Politician": 1.4,   # нужно следить за общественным мнением
+            "Businessman": 1.3,  # активное участие в социальных процессах
+            "ShopClerk": 1.2,    # контакт с людьми
+            "Worker": 1.1,       # практичность, но восприимчивость
+            "Developer": 1.0,    # техническое мышление, базовый уровень
+            "Teacher": 1.0,      # умеренная консервативность
+            "Philosopher": 0.9,  # критическое мышление
+            "SpiritualMentor": 0.9,  # духовная стабильность
+            "Doctor": 0.8        # профессиональная осторожность
         }
         
-        # Увеличенная базовая дельта (было 0.01, стало 0.05-0.08)
-        base_receptivity_delta = 0.1 if (aligned or sentiment == "Negative") else 0.05
-        
+        # Определяем базовую дельту в зависимости от сентимента и соответствия интересов (увеличены для более активных изменений)
+        if sentiment == "Positive":
+            if aligned:
+                base_receptivity_delta = 0.3  # Очень сильное положительное влияние
+            else:
+                base_receptivity_delta = 0.15 # Умеренное положительное влияние
+        else: # sentiment == "Negative"
+            if aligned:
+                base_receptivity_delta = -0.1 # Слабое отрицательное влияние (даже при совпадении интересов)
+            else:
+                base_receptivity_delta = -0.2 # Сильное отрицательное влияние
+
         # Применяем профессиональный множитель
         profession_multiplier = profession_multipliers.get(agent_profession, 1.0)
-        receptivity_delta = base_receptivity_delta * profession_multiplier
+        
+        # Добавляем влияние социального статуса (высокий статус = больше влияния трендов)
+        # Получаем агента для доступа к его атрибутам
+        agent = next((a for a in engine.agents if a.profession == agent_profession), None)
+        social_status_multiplier = 1.0
+        if agent:
+            # Социальный статус влияет на восприимчивость к трендам
+            # Высокий статус (4-5) = +20% к изменениям, низкий (1-2) = -10%
+            if agent.social_status >= 4.0:
+                social_status_multiplier = 1.2
+            elif agent.social_status >= 3.0:
+                social_status_multiplier = 1.1
+            elif agent.social_status <= 2.0:
+                social_status_multiplier = 0.9
+            
+            # Финансовые возможности также влияют (богатые более восприимчивы к позитивным трендам)
+            if sentiment == "Positive" and agent.financial_capability >= 4.0:
+                social_status_multiplier *= 1.1
+            elif sentiment == "Negative" and agent.financial_capability <= 2.0:
+                social_status_multiplier *= 1.1  # бедные более восприимчивы к негативным трендам
+        
+        receptivity_delta = base_receptivity_delta * profession_multiplier * social_status_multiplier
         
         # Защита от NaN
         if math.isnan(receptivity_delta) or math.isinf(receptivity_delta):
@@ -955,7 +1071,16 @@ class TrendInfluenceEvent(BaseEvent):
 
             # Проверяем, может ли агент вообще увидеть этот тренд
             # ИСПРАВЛЕНИЕ: Снижен порог trend_receptivity с 0.5 до 0.1 для большего участия
-            if agent.trend_receptivity > 0.1 and agent.get_affinity_for_topic(trend.topic) >= 2.5:
+            logger.debug(json.dumps({
+                    "event": "trend_influence_check",
+                    "agent_id": str(agent.id),
+                    "profession": agent.profession,
+                    "trend_id": str(trend.trend_id),
+                    "agent_trend_receptivity": agent.trend_receptivity,
+                    "agent_affinity_for_topic": agent.get_affinity_for_topic(trend.topic),
+                    "timestamp": self.timestamp
+                }, default=str))
+            if agent.trend_receptivity > 0.1 and agent.get_affinity_for_topic(trend.topic) >= 1.0:
                 # Определяем соответствие интересов
                 from capsim.common.topic_mapping import topic_to_interest_category
                 try:
@@ -969,7 +1094,16 @@ class TrendInfluenceEvent(BaseEvent):
                     aligned = interest_value > 3.0
 
                 # Рассчитываем дельты по новой матрице с учетом профессии
-                attribute_changes = self._calculate_reader_effects(trend.sentiment, aligned, agent.profession)
+                attribute_changes = self._calculate_reader_effects(trend.sentiment, aligned, agent.profession, engine)
+
+                logger.debug(json.dumps({
+                    "event": "trend_receptivity_delta_calculated",
+                    "agent_id": str(agent.id),
+                    "profession": agent.profession,
+                    "trend_id": str(trend.trend_id),
+                    "receptivity_delta_calculated": attribute_changes.get("trend_receptivity", 0.0),
+                    "timestamp": self.timestamp
+                }, default=str))
 
                 # Создаем пакет updatestate для агента
                 update_state = {
@@ -987,33 +1121,50 @@ class TrendInfluenceEvent(BaseEvent):
                 
                 # Логируем изменение trend_receptivity для отслеживания
                 if attribute_changes.get("trend_receptivity", 0.0) != 0.0:
-                    logger.info(json.dumps({
-                        "event": "trend_receptivity_changed",
-                        "agent_id": str(agent.id),
-                        "profession": agent.profession,
-                        "trend_id": str(trend.trend_id),
-                        "trend_sentiment": trend.sentiment,
-                        "aligned": aligned,
-                        "old_receptivity": round(old_receptivity, 3),
-                        "new_receptivity": round(agent.trend_receptivity, 3),
-                        "delta": round(attribute_changes["trend_receptivity"], 3),
-                        "reason": "TrendInfluence",
-                        "timestamp": self.timestamp
-                    }, default=str))
+                    delta = agent.trend_receptivity - old_receptivity
                     
-                    # Сохраняем изменение trend_receptivity в историю
-                    engine.add_to_batch_update({
-                        "type": "history",
-                        "simulation_id": engine.simulation_id,
-                        "person_id": agent.id,
-                        "attribute_name": "trend_receptivity",
-                        "old_value": old_receptivity,
-                        "new_value": agent.trend_receptivity,
-                        "change_timestamp": self.timestamp,
-                        "action_timestamp": self.timestamp,
-                        "reason": "TrendInfluence",
-                        "source_trend_id": trend.trend_id
-                    })
+                    # Сохраняем изменения trend_receptivity с очень низкой частотой (в 50-100 раз реже)
+                    # Только критически значительные изменения (|delta| >= 0.8) или с вероятностью 0.02%
+                    should_save = abs(delta) >= 0.8 or random.random() < 0.0002
+                    
+                    if should_save:
+                        logger.info(json.dumps({
+                            "event": "trend_receptivity_changed",
+                            "agent_id": str(agent.id),
+                            "profession": agent.profession,
+                            "trend_id": str(trend.trend_id),
+                            "trend_sentiment": trend.sentiment,
+                            "aligned": aligned,
+                            "old_receptivity": round(old_receptivity, 3),
+                            "new_receptivity": round(agent.trend_receptivity, 3),
+                            "delta": round(delta, 3),
+                            "reason": "TrendInfluence",
+                            "timestamp": self.timestamp,
+                            "saved": True
+                        }, default=str))
+                        
+                        # Сохраняем изменение trend_receptivity в историю
+                        engine.add_to_batch_update({
+                            "type": "history",
+                            "simulation_id": engine.simulation_id,
+                            "person_id": agent.id,
+                            "attribute_name": "trend_receptivity",
+                            "old_value": old_receptivity,
+                            "new_value": agent.trend_receptivity,
+                            "delta": delta,
+                            "change_timestamp": self.timestamp,
+                            "reason": "TrendInfluence",
+                            "source_trend_id": trend.trend_id
+                        })
+                    else:
+                        # Логируем пропущенное изменение для статистики
+                        logger.debug(json.dumps({
+                            "event": "trend_receptivity_change_skipped",
+                            "agent_id": str(agent.id),
+                            "delta": round(delta, 3),
+                            "reason": "below_threshold",
+                            "timestamp": self.timestamp
+                        }, default=str))
                 
                 # Добавляем взаимодействие с трендом
                 trend.add_interaction()
@@ -1143,7 +1294,22 @@ class SelfDevelopmentInfluenceEvent(BaseEvent):
                 "Unemployed": 1.1,  # больше времени на саморазвитие
             }
             
-            base_reduction = -0.03  # базовое снижение
+            # Увеличиваем влияние саморазвития на trend_receptivity
+            base_reduction = -0.08  # увеличенное базовое снижение
+            profession_multipliers = {
+                "Blogger": 1.5,      # творческие профессии сильнее реагируют на саморазвитие
+                "Artist": 1.4,       
+                "SpiritualMentor": 1.3,  # духовные профессии развиваются активнее
+                "Philosopher": 1.2,  
+                "Teacher": 1.1,      # образовательные профессии
+                "Developer": 1.0,    # технические профессии
+                "Doctor": 1.0,       
+                "Politician": 0.9,   # политики менее подвержены изменениям от саморазвития
+                "Businessman": 0.9,  
+                "Worker": 0.8,       # рабочие профессии
+                "ShopClerk": 0.8,    
+                "Unemployed": 0.7    # безработные меньше развиваются
+            }
             profession_multiplier = profession_multipliers.get(agent.profession, 1.0)
             receptivity_delta = base_reduction * profession_multiplier
             
@@ -1175,8 +1341,8 @@ class SelfDevelopmentInfluenceEvent(BaseEvent):
                 "timestamp": self.timestamp
             }, default=str))
             
-            # Сохраняем изменение trend_receptivity в историю
-            if receptivity_delta != 0.0:
+            # Сохраняем изменение trend_receptivity в историю с очень низкой частотой (в 100-200 раз реже)
+            if receptivity_delta != 0.0 and random.random() < 0.005:
                 old_receptivity = agent.trend_receptivity - receptivity_delta
                 engine.add_to_batch_update({
                     "type": "history",
@@ -1185,8 +1351,8 @@ class SelfDevelopmentInfluenceEvent(BaseEvent):
                     "attribute_name": "trend_receptivity",
                     "old_value": old_receptivity,
                     "new_value": agent.trend_receptivity,
+                    "delta": receptivity_delta,
                     "change_timestamp": self.timestamp,
-                    "action_timestamp": self.timestamp,
                     "reason": "SelfDevelopment",
                     "source_trend_id": None
                 })
