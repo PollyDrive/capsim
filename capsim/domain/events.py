@@ -823,20 +823,20 @@ class TrendInfluenceEvent(BaseEvent):
     def _calculate_reader_effects(sentiment: str, aligned: bool, agent_profession: str = None) -> dict[str, float]:
         """Return attribute deltas based on sentiment matrix from tech_v1.9 with professional differentiation."""
         
-        # Профессиональные множители для trend_receptivity
+        # Профессиональные множители для trend_receptivity (сбалансированы)
         profession_multipliers = {
-            "Blogger": 1.5,      # высокая восприимчивость
-            "Artist": 1.3,       # творческая натура
-            "Businessman": 1.0,  # базовый уровень
-            "Developer": 0.8,    # техническое мышление
-            "Teacher": 0.7,      # умеренная консервативность
-            "Doctor": 0.5,       # профессиональная осторожность
+            "Blogger": 1.3,      # высокая восприимчивость (снижено с 1.5)
+            "Artist": 1.2,       # творческая натура (снижено с 1.3)
             "Unemployed": 1.2,   # больше времени на тренды
             "Politician": 1.1,   # нужно следить за общественным мнением
-            "SpiritualMentor": 0.6,  # духовная стабильность
-            "Philosopher": 0.8,  # критическое мышление
-            "Worker": 0.9,       # практичность
-            "ShopClerk": 1.0     # средний уровень
+            "Businessman": 1.0,  # базовый уровень
+            "ShopClerk": 1.0,    # средний уровень
+            "Worker": 1.0,       # практичность (повышено с 0.9)
+            "Developer": 0.9,    # техническое мышление (повышено с 0.8)
+            "Teacher": 0.9,      # умеренная консервативность (повышено с 0.7)
+            "Philosopher": 0.9,  # критическое мышление (повышено с 0.8)
+            "SpiritualMentor": 0.8,  # духовная стабильность (повышено с 0.6)
+            "Doctor": 0.8        # профессиональная осторожность (повышено с 0.5)
         }
         
         # Увеличенная базовая дельта (было 0.01, стало 0.05-0.08)
@@ -954,8 +954,8 @@ class TrendInfluenceEvent(BaseEvent):
                 continue # Автор не влияет сам на себя
 
             # Проверяем, может ли агент вообще увидеть этот тренд
-            # ИСПРАВЛЕНИЕ: Порог affinity теперь >= 2.5
-            if agent.trend_receptivity > 0.5 and agent.get_affinity_for_topic(trend.topic) >= 2.5:
+            # ИСПРАВЛЕНИЕ: Снижен порог trend_receptivity с 0.5 до 0.1 для большего участия
+            if agent.trend_receptivity > 0.1 and agent.get_affinity_for_topic(trend.topic) >= 2.5:
                 # Определяем соответствие интересов
                 from capsim.common.topic_mapping import topic_to_interest_category
                 try:
