@@ -72,4 +72,3 @@ docker-compose.override.yml
 .idea/
 *.iml
 
-jupyter-env/
