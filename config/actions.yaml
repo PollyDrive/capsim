@@ -1,5 +1,6 @@
-# CAPSIM v1.9 Action Configuration
+# CAPSIM v2.0 Action Configuration
 # Defines cooldowns, limits, effects, and profession weights for all agent actions
+# v2.0: Added energy costs for realistic resource management
 
 COOLDOWNS:
   POST_MIN: 40      # Согласно ТЗ v1.9
@@ -11,27 +12,27 @@ LIMITS:
 EFFECTS:
   POST:
     time_budget: -0.15   # Согласно ТЗ v1.9 (time_cost)
-    energy_level: -0.20  # Согласно ТЗ v1.9 (energy_cost)
+    energy_level: -0.50  # v2.0: ИСПРАВЛЕНО - теперь тратит энергию (base_activity + post_action)
     social_status: 0.05  # Согласно ТЗ v1.9 (social_bonus)
   
   SELF_DEV:
     time_budget: -0.80   # Согласно ТЗ v1.9 (time_cost)
-    energy_level: 0.45   # Согласно ТЗ v1.9 (energy_bonus)
+    energy_level: 0.05   # v2.0: ИСПРАВЛЕНО - меньший бонус, учитывая базовую трату
     social_status: 0.10  # Согласно ТЗ v1.9 (social_bonus)
   
   PURCHASE:
     L1:
       cost_range: [0.1, 1.0]     # Согласно ТЗ v1.9
-      energy_level: 0.30         # Согласно ТЗ v1.9 (energy_bonus)
+      energy_level: -0.10        # v2.0: ИСПРАВЛЕНО - теперь тратит энергию (base_activity + purchase_action)
       time_budget: -0.10         # Согласно ТЗ v1.9 (time_cost)
     L2:
       cost_range: [1.1, 2.4]     # Согласно ТЗ v1.9
-      energy_level: 0.45         # Согласно ТЗ v1.9 (energy_bonus)
+      energy_level: 0.05         # v2.0: ИСПРАВЛЕНО - меньший бонус, учитывая базовую трату
       time_budget: -0.10         # Согласно ТЗ v1.9 (time_cost)
       social_status: 0.05        # Согласно ТЗ v1.9 (social_bonus)
     L3:
       cost_range: [2.5, 3.5]     # Согласно ТЗ v1.9
-      energy_level: 0.70         # Согласно ТЗ v1.9 (energy_bonus)
+      energy_level: 0.30         # v2.0: ИСПРАВЛЕНО - меньший бонус, учитывая базовую трату
       time_budget: -0.10         # Согласно ТЗ v1.9 (time_cost)
       social_status: 0.20        # Согласно ТЗ v1.9 (social_bonus)
 

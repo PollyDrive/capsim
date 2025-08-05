@@ -8,7 +8,11 @@ from datetime import datetime, date
 from typing import List, Dict, Optional, Any, Set, Tuple
 from uuid import UUID, uuid4
 
-from faker import Faker
+try:
+    from faker import Faker
+    HAS_FAKER = True
+except ImportError:
+    HAS_FAKER = False
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import select, insert, update, delete, text
@@ -813,4 +817,54 @@ class DatabaseRepository:
                     "energy_level": (row.energy_level_min, row.energy_level_max),
                     "time_budget": (row.time_budget_min, row.time_budget_max),
                 }
-            return ranges 
+            return ranges
+
+    async def sync_profession_config_from_yaml(self, professions_config: Dict) -> None:
+        """Синхронизирует конфигурацию профессий из YAML в таблицу agents_profession."""
+        if not professions_config:
+            return
+            
+        async with self.ReadOnlySession() as session:
+            # Очищаем таблицу
+            await session.execute(text("TRUNCATE TABLE capsim.agents_profession RESTART IDENTITY CASCADE"))
+            
+            # Подготавливаем данные для вставки
+            insert_data = []
+            for profession, prof_config in professions_config.items():
+                attributes = prof_config.get('attributes', {})
+                
+                # Извлекаем диапазоны атрибутов
+                financial_capability = attributes.get('financial_capability', [1, 5])
+                trend_receptivity = attributes.get('trend_receptivity', [1, 5])
+                social_status = attributes.get('social_status', [1, 5])
+                energy_level = attributes.get('energy_level', [1, 5])
+                time_budget = attributes.get('time_budget', [1, 5])
+                
+                insert_data.append({
+                    "profession": profession,
+                    "financial_capability_min": financial_capability[0],
+                    "financial_capability_max": financial_capability[1],
+                    "trend_receptivity_min": trend_receptivity[0],
+                    "trend_receptivity_max": trend_receptivity[1],
+                    "social_status_min": social_status[0],
+                    "social_status_max": social_status[1],
+                    "energy_level_min": energy_level[0],
+                    "energy_level_max": energy_level[1],
+                    "time_budget_min": time_budget[0],
+                    "time_budget_max": time_budget[1],
+                })
+            
+            # Вставляем данные
+            if insert_data:
+                await session.execute(text("""
+                    INSERT INTO capsim.agents_profession (
+                        profession, financial_capability_min, financial_capability_max, 
+                        trend_receptivity_min, trend_receptivity_max, social_status_min, social_status_max, 
+                        energy_level_min, energy_level_max, time_budget_min, time_budget_max
+                    ) VALUES (
+                        :profession, :financial_capability_min, :financial_capability_max, 
+                        :trend_receptivity_min, :trend_receptivity_max, :social_status_min, :social_status_max, 
+                        :energy_level_min, :energy_level_max, :time_budget_min, :time_budget_max
+                    )
+                """), insert_data)
+                await session.commit() 

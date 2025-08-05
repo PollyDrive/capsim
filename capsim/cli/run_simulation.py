@@ -9,6 +9,7 @@ import sys
 import json
 import logging
 from typing import Optional
+import yaml
 
 # For test mode use in-memory repository
 from types import SimpleNamespace
@@ -21,6 +22,11 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+def load_simulation_config():
+    """Loads simulation configuration from config/simulation.yaml."""
+    config_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config', 'simulation.yaml')
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
 
 async def run_simulation_cli(
     num_agents: int = 100,
@@ -43,8 +49,6 @@ async def run_simulation_cli(
     print(f"⏱️  Продолжительность: {duration_days} дней")
     print(f"⚡ Скорость симуляции: {sim_speed_factor}x")
     
-    # Проверяем доступность зависимостей
-    # Устанавливаем SIM_SPEED_FACTOR ПЕРЕД импортом движка, чтобы settings подтянули корректное значение
     os.environ["SIM_SPEED_FACTOR"] = str(sim_speed_factor)
 
     try:
@@ -55,7 +59,6 @@ async def run_simulation_cli(
         print(f"❌ Ошибка импорта: {e}")
         return
     
-    # URL базы данных
     if not database_url:
         database_url = os.getenv("DATABASE_URL")
         if not database_url:
@@ -64,23 +67,21 @@ async def run_simulation_cli(
     print(f"🗄️  База данных: {database_url}")
     
     try:
-        # SIM_SPEED_FACTOR уже установлен выше
-        
-        # Подмена репозитория на in-memory в тестовом режиме
-        if database_url and database_url.startswith("sqlite+aiosqlite"):  # тестовый режим
-            from reports.demo_simulation import _InMemoryRepo as DatabaseRepository  # type: ignore
+        if database_url and database_url.startswith("sqlite+aiosqlite"): 
+            from reports.demo_simulation import _InMemoryRepo as DatabaseRepository
         else:
-            DatabaseRepository = _RealRepository  # type: ignore
+            DatabaseRepository = _RealRepository
         
-        # Создаем репозиторий и движок
         if DatabaseRepository is _RealRepository:
             db_repo = DatabaseRepository(database_url)
         else:
             db_repo = DatabaseRepository()
+        
+        simulation_config = load_simulation_config()
         engine = SimulationEngine(db_repo)
         
         print("\n🔄 Инициализация симуляции...")
-        await engine.initialize(num_agents=num_agents, duration_days=duration_days)
+        await engine.initialize(num_agents=num_agents, duration_days=duration_days, config=simulation_config)
         
         print(f"✅ Создано агентов: {len(engine.agents)}")
         print(f"✅ Системных событий: {len(engine.event_queue)}")
@@ -88,27 +89,43 @@ async def run_simulation_cli(
         
         print(f"\n▶️  Запуск симуляции на {duration_days} дней...")
         
-        # Запускаем симуляцию
         await engine.run_simulation()
         
-        # Финальная статистика
         final_stats = engine.get_simulation_stats()
         
-        # Импортируем функцию конвертации времени
         from ..common.time_utils import convert_sim_time_to_human, format_simulation_time_detailed
         
         print("\n📈 Результаты симуляции:")
         print(f"  Время выполнения: {final_stats['current_time']:.1f} минут ({format_simulation_time_detailed(final_stats['current_time'])})")
         print(f"  Активных агентов: {final_stats['active_agents']}/{final_stats['total_agents']}")
         print(f"  Созданных трендов: {final_stats['active_trends']}")
+        print(f"  📅 Создано событий: {final_stats.get('events_created', 0)}")
+        print(f"  ✅ Обработано событий: {final_stats.get('events_processed', 0)}")
+        print(f"  ⏳ Событий в очереди: {final_stats.get('events_in_queue', 0)}")
         print(f"  Среднее действий/агент/час: {final_stats.get('avg_actions_per_agent_per_hour', 0):.2f}")
         print(f"  Всего покупок: {final_stats.get('total_purchases', 0)}")
         print(f"  Всего саморазвитий: {final_stats.get('total_selfdev', 0)}")
         print(f"  ID симуляции: {final_stats['simulation_id']}")
         
-        print("\n✅ Симуляция завершена успешно!")
+        # Проверяем корректность завершения
+        events_created = final_stats.get('events_created', 0)
+        events_processed = final_stats.get('events_processed', 0)
+        events_in_queue = final_stats.get('events_in_queue', 0)
         
-        # Закрываем соединение с БД
+        if events_in_queue > 0:
+            print(f"\n⚠️  Внимание: {events_in_queue} событий осталось в очереди")
+            print("   Симуляция завершилась до обработки всех событий")
+        
+        if events_processed < events_created:
+            print(f"\n⚠️  Внимание: Обработано {events_processed} из {events_created} созданных событий")
+            completion_rate = (events_processed / events_created * 100) if events_created > 0 else 0
+            print(f"   Процент завершения: {completion_rate:.1f}%")
+        
+        if events_processed == events_created and events_in_queue == 0:
+            print("\n✅ Симуляция завершена успешно! Все события обработаны.")
+        else:
+            print("\n✅ Симуляция завершена.")
+        
         await db_repo.close()
         
     except Exception as e:
@@ -116,7 +133,6 @@ async def run_simulation_cli(
         import traceback
         traceback.print_exc()
         
-        # Попытка graceful shutdown
         try:
             await engine.shutdown()
             await db_repo.close()
@@ -124,7 +140,6 @@ async def run_simulation_cli(
             pass
         
         raise
-
 
 def main():
     """Main CLI entry point."""
@@ -134,16 +149,16 @@ def main():
     parser.add_argument("--agents", type=int, default=100, help="Количество агентов")
     parser.add_argument("--days", type=float, default=1, help="Продолжительность в днях")
     parser.add_argument("--db-url", type=str, help="URL базы данных")
-    parser.add_argument("--speed", type=float, default=1.0, help="Фактор скорости симуляции")
+    parser.add_argument("--speed", type=float, default=240.0, help="Фактор скорости симуляции (240x = быстро, 1x = реальное время)")
+    parser.add_argument("--240x", action="store_const", const=240.0, dest="speed", help="Быстрая симуляция (эквивалент --speed 240)")
     parser.add_argument("--test", action="store_true", help="Режим тестирования (короткая симуляция)")
     
     args = parser.parse_args()
     
-    # Режим тестирования
     if args.test:
         print("🧪 Режим тестирования - мини-симуляция")
         args.agents = 10
-        args.days = 60/1440  # 60 минут
+        args.days = 60/1440
     
     try:
         asyncio.run(run_simulation_cli(
@@ -161,4 +176,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main() 
+    main()

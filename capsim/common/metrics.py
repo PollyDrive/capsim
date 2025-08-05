@@ -49,6 +49,44 @@ EVENTS_TABLE_ROWS = Gauge(
     'Total number of rows in events table'
 )
 
+# v2.0: Economic balance metrics
+ECONOMIC_BALANCE_METRICS = {
+    'avg_financial_capability': Gauge(
+        'capsim_avg_financial_capability_by_profession',
+        'Average financial capability by profession',
+        ['profession']
+    ),
+    'daily_income_total': Counter(
+        'capsim_daily_income_total',
+        'Total daily income distributed',
+        ['profession']
+    ),
+    'daily_expenses_total': Counter(
+        'capsim_daily_expenses_total', 
+        'Total daily expenses deducted',
+        ['profession']
+    ),
+    'energy_recovery_events': Counter(
+        'capsim_energy_recovery_events_total',
+        'Total energy recovery events processed'
+    ),
+    'night_recovery_success': Counter(
+        'capsim_night_recovery_success_total',
+        'Successful night recovery operations',
+        ['recovery_type']
+    ),
+    'social_status_changes': Counter(
+        'capsim_social_status_changes_total',
+        'Social status changes tracked',
+        ['change_type', 'profession']
+    ),
+    'economic_balance_errors': Counter(
+        'capsim_economic_balance_errors_total',
+        'Economic balance system errors',
+        ['error_type']
+    )
+}
+
 EVENTS_INSERT_RATE = Gauge(
     'capsim_events_insert_rate_per_minute',
     'INSERT operations per minute into events table'
@@ -383,4 +421,172 @@ def update_agent_attributes(persons):
         for attr_name, values in attributes.items():
             if values:  # Проверяем что есть значения
                 p95_value = np.percentile(values, 95)
-                AGENT_ATTRIBUTE.labels(attribute=attr_name, profession=prof).set(p95_value) 
+                AGENT_ATTRIBUTE.labels(attribute=attr_name, profession=prof).set(p95_value)
+
+
+# v2.0: Economic balance metrics functions
+def record_daily_income(profession: str, amount: float):
+    """Record daily income distributed to agents."""
+    ECONOMIC_BALANCE_METRICS['daily_income_total'].labels(profession=profession).inc(amount)
+
+
+def record_daily_expenses(profession: str, amount: float):
+    """Record daily expenses deducted from agents."""
+    ECONOMIC_BALANCE_METRICS['daily_expenses_total'].labels(profession=profession).inc(amount)
+
+
+def record_energy_recovery():
+    """Record energy recovery event."""
+    ECONOMIC_BALANCE_METRICS['energy_recovery_events'].inc()
+
+
+def record_night_recovery(recovery_type: str):
+    """Record successful night recovery operation."""
+    ECONOMIC_BALANCE_METRICS['night_recovery_success'].labels(recovery_type=recovery_type).inc()
+
+
+def record_social_status_change(change_type: str, profession: str):
+    """Record social status change."""
+    ECONOMIC_BALANCE_METRICS['social_status_changes'].labels(
+        change_type=change_type, 
+        profession=profession
+    ).inc()
+
+
+def record_economic_balance_error(error_type: str):
+    """Record economic balance system error."""
+    ECONOMIC_BALANCE_METRICS['economic_balance_errors'].labels(error_type=error_type).inc()
+
+
+def update_financial_capability_by_profession(persons):
+    """Update average financial capability metrics by profession."""
+    from collections import defaultdict
+    
+    by_profession = defaultdict(list)
+    
+    for person in persons:
+        by_profession[person.profession].append(person.financial_capability)
+    
+    for profession, values in by_profession.items():
+        if values:
+            avg_value = sum(values) / len(values)
+            ECONOMIC_BALANCE_METRICS['avg_financial_capability'].labels(
+                profession=profession
+            ).set(avg_value)
+
+
+def record_trend_receptivity_change(agent_id: str, profession: str, old_value: float, new_value: float, reason: str):
+    """Record trend_receptivity change for analysis."""
+    delta = new_value - old_value
+    
+    # Record the change in Prometheus metrics if available
+    try:
+        from prometheus_client import Counter, Histogram
+        
+        # Create metrics if they don't exist
+        if not hasattr(record_trend_receptivity_change, '_metrics_created'):
+            record_trend_receptivity_change.trend_receptivity_changes = Counter(
+                'capsim_trend_receptivity_changes_total',
+                'Total trend receptivity changes',
+                ['profession', 'reason', 'direction']
+            )
+            record_trend_receptivity_change.trend_receptivity_delta = Histogram(
+                'capsim_trend_receptivity_delta',
+                'Trend receptivity change magnitude',
+                ['profession', 'reason'],
+                buckets=[-0.3, -0.2, -0.1, -0.05, 0, 0.05, 0.1, 0.2, 0.3]
+            )
+            record_trend_receptivity_change._metrics_created = True
+        
+        direction = "increase" if delta > 0 else "decrease" if delta < 0 else "no_change"
+        record_trend_receptivity_change.trend_receptivity_changes.labels(
+            profession=profession, reason=reason, direction=direction
+        ).inc()
+        
+        record_trend_receptivity_change.trend_receptivity_delta.labels(
+            profession=profession, reason=reason
+        ).observe(delta)
+        
+    except ImportError:
+        pass  # Prometheus not available
+
+
+def generate_trend_receptivity_report(db_session, simulation_id: str, time_window_hours: int = 24):
+    """Generate a report on trend_receptivity dynamics by profession."""
+    import json
+    from collections import defaultdict
+    
+    # Query recent trend_receptivity changes
+    query = """
+        SELECT 
+            p.profession,
+            pah.old_value,
+            pah.new_value,
+            pah.delta,
+            pah.reason,
+            pah.change_timestamp
+        FROM person_attribute_history pah
+        JOIN simulation_participants sp ON pah.person_id = sp.person_id
+        JOIN persons p ON sp.person_id = p.id
+        WHERE pah.simulation_id = :simulation_id
+        AND pah.attribute_name = 'trend_receptivity'
+        AND pah.change_timestamp >= (
+            SELECT MAX(change_timestamp) - :time_window 
+            FROM person_attribute_history 
+            WHERE simulation_id = :simulation_id
+        )
+        ORDER BY pah.change_timestamp DESC
+    """
+    
+    try:
+        results = db_session.execute(query, {
+            "simulation_id": simulation_id,
+            "time_window": time_window_hours * 60  # Convert to minutes
+        }).fetchall()
+        
+        # Aggregate by profession
+        profession_stats = defaultdict(lambda: {
+            "total_changes": 0,
+            "positive_changes": 0,
+            "negative_changes": 0,
+            "total_delta": 0.0,
+            "avg_delta": 0.0,
+            "trend_influence_count": 0,
+            "self_dev_influence_count": 0
+        })
+        
+        for row in results:
+            prof = row.profession
+            delta = float(row.delta)
+            reason = row.reason
+            
+            stats = profession_stats[prof]
+            stats["total_changes"] += 1
+            stats["total_delta"] += delta
+            
+            if delta > 0:
+                stats["positive_changes"] += 1
+            elif delta < 0:
+                stats["negative_changes"] += 1
+                
+            if reason == "TrendInfluence":
+                stats["trend_influence_count"] += 1
+            elif reason == "SelfDevelopmentInfluence":
+                stats["self_dev_influence_count"] += 1
+        
+        # Calculate averages
+        for prof, stats in profession_stats.items():
+            if stats["total_changes"] > 0:
+                stats["avg_delta"] = stats["total_delta"] / stats["total_changes"]
+        
+        report = {
+            "simulation_id": simulation_id,
+            "time_window_hours": time_window_hours,
+            "total_records": len(results),
+            "profession_breakdown": dict(profession_stats)
+        }
+        
+        return report
+        
+    except Exception as e:
+        return {"error": str(e), "simulation_id": simulation_id} 

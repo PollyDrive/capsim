@@ -1,0 +1,121 @@
+# CAPSIM v2.0 Economic Balance Configuration
+# Конфигурация экономической модели для решения дисбаланса атрибутов
+
+# Коэффициенты профессиональных доходов
+# базовый_доход = initial_financial_capability × profession_coefficient
+INCOME_COEFFICIENTS:
+  Businessman: 1.3
+  Worker: 0.8
+  Developer: 1.0
+  Teacher: 0.6
+  Doctor: 1.1
+  Blogger: 1.2
+  Politician: 1.5
+  ShopClerk: 0.8
+  Artist: 0.5
+  SpiritualMentor: 0.6
+  Philosopher: 0.7
+  Unemployed: 0.0
+
+# Обязательные ежедневные расходы по профессиям
+DAILY_EXPENSES:
+  Businessman: 2.5
+  Worker: 1.8
+  Developer: 2.0
+  Teacher: 1.2
+  Doctor: 2.2
+  Blogger: 1.8
+  Politician: 3.0
+  ShopClerk: 1.5
+  Artist: 1.0
+  SpiritualMentor: 1.0
+  Philosopher: 1.1
+  Unemployed: 0.5
+
+# Базовые траты энергии за действия (АДДИТИВНО к существующим эффектам)
+ENERGY_COSTS:
+  base_activity: 0.3
+  stress_actions: 0.5
+  post_action: 0.2
+  purchase_action: 0.1
+  selfdev_action: 0.4
+
+# Временные затраты на действия (в минутах)
+TIME_COSTS:
+  simple_actions: [5, 15]
+  complex_actions: [30, 60]
+  post_action: 15
+  purchase_action: 10
+  selfdev_action: 80
+
+# Система социального статуса
+STATUS_GAINS:
+  expensive_purchases:
+    L1: 0.05
+    L2: 0.1
+    L3: 0.2
+    diminishing_returns: 0.8
+  
+  quality_content:
+    high_engagement: 0.4
+    medium_engagement: 0.2
+    low_engagement: 0.1
+  
+  positive_posts: 0.15
+  selfdev_bonus: 0.1
+
+STATUS_LOSSES:
+  negative_content: -0.3
+  controversial_posts: -0.2
+  inactivity_penalty: -0.05
+  excessive_purchases: -0.1
+
+# Ночное восстановление (00:00-08:00)
+NIGHT_RECOVERY:
+  energy_bonus: 1.2
+  financial_bonus: 1.0
+  time_full_restore: true
+  reset_daily_counters: true
+  
+  income_conditions:
+    social_status_growth: true
+    minimum_activity: 3
+    
+# Максимальные значения time_budget по профессиям (для ночного восстановления)
+MAX_TIME_BUDGET:
+  Businessman: 3.0
+  Worker: 3.0
+  Developer: 4.0
+  Teacher: 3.0
+  Doctor: 3.0
+  Blogger: 4.0
+  Politician: 3.0
+  ShopClerk: 3.0
+  Artist: 4.0
+  SpiritualMentor: 4.0
+  Philosopher: 4.0
+  Unemployed: 5.0
+
+# Настройки дневного/ночного цикла
+DAY_NIGHT_CYCLE:
+  day_start: 8
+  day_end: 24
+  night_activity_chance: 0.2
+  
+# Балансировочные параметры
+BALANCE_SETTINGS:
+  enable_income_system: true
+  enable_daily_expenses: true
+  enable_energy_costs: true
+  enable_night_recovery: true
+  enable_status_system: true
+  
+  debug_economic_events: false
+  log_night_recovery: false
+  
+# Пороги для алертов мониторинга
+MONITORING_THRESHOLDS:
+  critical_financial_drop: -2.0
+  energy_exhaustion: 0.5
+  time_budget_depletion: 0.2
+  social_status_crash: -1.0

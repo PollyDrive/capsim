@@ -52,6 +52,7 @@ class Person:
     last_post_ts: Optional[float] = None  # Last post timestamp
     last_selfdev_ts: Optional[float] = None  # Last self-development timestamp
     last_purchase_ts: Dict[str, Optional[float]] = field(default_factory=dict)  # {L1: timestamp, L2: timestamp, L3: timestamp}
+    last_attribute_change_ts: Dict[str, Optional[float]] = field(default_factory=dict)  # {attribute_name: timestamp}
     
     # Simulation metadata
     simulation_id: Optional[UUID] = None
@@ -127,7 +128,10 @@ class Person:
         """
         for attribute, delta in changes.items():
             if hasattr(self, attribute):
-                current_value = float(getattr(self, attribute))  # Конвертируем Decimal в float
+                raw_value = getattr(self, attribute)
+                if raw_value is None:
+                    continue  # Пропускаем None значения
+                current_value = float(raw_value)  # Конвертируем Decimal в float
                 
                 # Применяем ограничения по диапазону
                 if attribute in ["energy_level", "financial_capability", 
@@ -182,7 +186,7 @@ class Person:
             return (
                 self.energy_level >= 0.5 and
                 self.time_budget >= 0.5 and  # Снижено с 1 до 0.5
-                self.trend_receptivity > 0
+                self.trend_receptivity >= 0.01
             )
             
         return False
@@ -196,7 +200,10 @@ class Person:
         """
         for attribute, delta in effects.items():
             if hasattr(self, attribute):
-                current_value = float(getattr(self, attribute))  # Конвертируем Decimal в float
+                raw_value = getattr(self, attribute)
+                if raw_value is None:
+                    continue  # Пропускаем None значения
+                current_value = float(raw_value)  # Конвертируем Decimal в float
                 
                 # ИСПРАВЛЕНИЕ: Защита от NaN в входных данных
                 if math.isnan(current_value) or math.isnan(delta):
@@ -485,25 +492,35 @@ class Person:
                     post_score = 0.3
                 else:
                     post_score = (
-                        virality * self.trend_receptivity / 25  # Согласно ТЗ
+                        virality * (self.trend_receptivity + 0.5) / 35  # Уменьшаем с 25 до 35 для снижения веса постов
                         * (1 + self.social_status / 10)  # Согласно ТЗ
                     )
             else:
-                post_score = 0.3  # Базовый score для постов без тренда
+                post_score = 0.3  # Возвращаем исходный базовый score для постов
             actions.append(("Post", post_score))
         
         # PURCHASE logic (L1/L2/L3) - согласно ТЗ v1.8
         for level in ["L1", "L2", "L3"]:
             if self.can_purchase(current_time, level):
-                # ИСПРАВЛЕНИЕ: Снижаем базовый score покупок с 0.3 до 0.1
-                score = 0.1 * getattr(action_config, 'shop_weights', {}).get(self.profession, 1.0)  # Согласно ТЗ
+                # Умеренно увеличиваем вес дешевых покупок (L1), оставляем низкий для дорогих (L2, L3)
+                if level == "L1":
+                    base_score = 0.125  # Умеренное увеличение для дешевых покупок
+                elif level == "L2":
+                    base_score = 0.08  # Снижаем для средних покупок
+                else:  # L3
+                    base_score = 0.05  # Снижаем для дорогих покупок
+                
+                score = base_score * getattr(action_config, 'shop_weights', {}).get(self.profession, 1.0)  # Согласно ТЗ
                 if trend and hasattr(trend, 'topic') and trend.topic == "Economic":
                     score *= 1.2  # Согласно ТЗ
                 actions.append((f"Purchase_{level}", score))
         
         # SELF_DEV logic - согласно ТЗ v1.8
         if self.can_self_dev(current_time):
-            score = max(0.0, 1 - self.energy_level / 5)  # Согласно ТЗ
+            # Увеличиваем базовый вес саморазвития и делаем его менее зависимым от энергии
+            base_score = 0.4  # Увеличиваем базовый вес саморазвития
+            energy_factor = max(0.3, 1 - self.energy_level / 5)  # Минимум 0.3 даже при высокой энергии
+            score = base_score * energy_factor
             actions.append(("SelfDev", score))
         
         # Weighted selection согласно ТЗ

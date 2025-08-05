@@ -19,6 +19,37 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def should_save_attribute_change(attribute_name: str, delta: float, reason: str) -> bool:
+    """
+    Определяет, стоит ли сохранять изменение атрибута в историю.
+    Фильтрует незначительные изменения для предотвращения лавины событий.
+    """
+    # Ужесточенные пороги для сохранения изменений
+    min_thresholds = {
+        "energy_level": 0.5,        # Только очень значительные изменения энергии
+        "financial_capability": 0.4, # Только очень значительные финансовые изменения
+        "social_status": 0.4,       # Только очень значительные изменения статуса
+        "trend_receptivity": 0.6,   # Только очень значительные изменения восприимчивости
+        "time_budget": 0.8          # Только очень значительные изменения времени
+    }
+    
+    # Особые случаи для определенных причин
+    if reason in ["MorningRecovery", "EnergyRecovery"]:
+        # Для восстановления сохраняем только с вероятностью 2%
+        return random.random() < 0.02
+    
+    if reason.startswith("Purchase"):
+        # Для покупок сохраняем только значительные изменения или с вероятностью 3%
+        return abs(delta) >= min_thresholds.get(attribute_name, 0.4) or random.random() < 0.03
+    
+    if reason in ["SelfDevAction", "TrendInfluence"]:
+        # Для саморазвития и трендов сохраняем только значительные изменения или с вероятностью 5%
+        return abs(delta) >= min_thresholds.get(attribute_name, 0.4) or random.random() < 0.05
+    
+    # По умолчанию сохраняем только очень значительные изменения
+    return abs(delta) >= min_thresholds.get(attribute_name, 0.4)
+
+
 class EventPriority(IntEnum):
     """Event priority levels for v1.8 priority queue system."""
     SYSTEM = 100       # DailyResetEvent, EnergyRecoveryEvent - highest priority
@@ -71,9 +102,10 @@ class PublishPostAction(BaseEvent):
         Обрабатывает публикацию поста.
         
         1. Проверяет ограничения агента (энергия, время)
-        2. Создает новый тренд через TrendProcessor
-        3. Обновляет состояние агента
-        4. Запускает распространение влияния
+        2. Применяет затраты энергии (v2.0)
+        3. Создает новый тренд через TrendProcessor
+        4. Обновляет состояние агента
+        5. Запускает распространение влияния
         """
         # Найти агента
         agent = None
@@ -103,6 +135,13 @@ class PublishPostAction(BaseEvent):
                 "day_time": self.timestamp % 1440
             }, default=str))
             return
+        
+        # v2.0: Применить затраты энергии за действие
+        # try:
+        #     from ..common.economic_balance import economic_balance_manager
+        #     energy_cost = economic_balance_manager.apply_energy_cost(agent, "post")
+        # except ImportError:
+        #     energy_cost = 0.0
             
         # Создать новый тренд
         from ..domain.trend import Trend, CoverageLevel
@@ -185,6 +224,14 @@ class PublishPostAction(BaseEvent):
         agent.last_post_ts = self.timestamp
         agent.actions_today += 1  # ИСПРАВЛЕНИЕ: Увеличиваем счетчик всех действий
         
+        # v2.0: Отслеживаем изменение социального статуса для экономической модели
+        try:
+            from ..common.economic_balance import economic_balance_manager
+            # Пост дает небольшой бонус к социальному статусу
+            economic_balance_manager.track_status_change(agent, 0.05)
+        except ImportError:
+            pass
+        
         # Добавить в batch обновления (только tracking атрибуты)
         engine.add_to_batch_update({
             "type": "person_state",
@@ -237,19 +284,20 @@ class EnergyRecoveryEvent(BaseEvent):
                 agent.energy_level = min(5, agent.energy_level + recovery_amount)
                 self.recovered_agent_ids.append(str(agent.id))
                 
-                # ИСПРАВЛЕНИЕ: Создаем запись в person_attribute_history
-                engine.add_to_batch_update({
-                    "type": "attribute_history",
-                    "person_id": agent.id,
-                    "simulation_id": engine.simulation_id,
-                    "attribute_name": "energy_level",
-                    "old_value": old_energy,
-                    "new_value": agent.energy_level,
-                    "delta": recovery_amount,
-                    "reason": "EnergyRecovery",
-                    "source_trend_id": None,
-                    "change_timestamp": self.timestamp
-                })
+                # Создаем запись в person_attribute_history только для значимых изменений
+                if should_save_attribute_change("energy_level", recovery_amount, "EnergyRecovery"):
+                    engine.add_to_batch_update({
+                        "type": "attribute_history",
+                        "person_id": agent.id,
+                        "simulation_id": engine.simulation_id,
+                        "attribute_name": "energy_level",
+                        "old_value": old_energy,
+                        "new_value": agent.energy_level,
+                        "delta": recovery_amount,
+                        "reason": "EnergyRecovery",
+                        "source_trend_id": None,
+                        "change_timestamp": self.timestamp
+                    })
         
         # ИСПРАВЛЕНИЕ: Проверяем время окончания симуляции перед планированием следующего события
         next_timestamp = self.timestamp + 5
@@ -338,20 +386,21 @@ class MorningRecoveryEvent(BaseEvent):
             # ИСПРАВЛЕНИЕ: Убираем person_state update - не обновляем таблицу persons
             # Все изменения атрибутов сохраняются только в person_attribute_history
 
-            # Add attribute_history for each change
+            # Add attribute_history only for significant changes
             for attr, delta in changes.items():
-                engine.add_to_batch_update({
-                    "type": "attribute_history",
-                    "person_id": agent.id,
-                    "simulation_id": engine.simulation_id,
-                    "attribute_name": attr,
-                    "old_value": getattr(agent, attr) - delta,
-                    "new_value": getattr(agent, attr),
-                    "delta": delta,
-                    "reason": "MorningRecovery",
-                    "source_trend_id": None,
-                    "change_timestamp": self.timestamp
-                })
+                if should_save_attribute_change(attr, delta, "MorningRecovery"):
+                    engine.add_to_batch_update({
+                        "type": "attribute_history",
+                        "person_id": agent.id,
+                        "simulation_id": engine.simulation_id,
+                        "attribute_name": attr,
+                        "old_value": getattr(agent, attr) - delta,
+                        "new_value": getattr(agent, attr),
+                        "delta": delta,
+                        "reason": "MorningRecovery",
+                        "source_trend_id": None,
+                        "change_timestamp": self.timestamp
+                    })
             recovered += 1
 
         # ИСПРАВЛЕНИЕ: Проверяем время окончания симуляции перед планированием следующего события
@@ -372,6 +421,77 @@ class MorningRecoveryEvent(BaseEvent):
             "recovered_agents": recovered,
             "energy_bonus": energy_bonus,
             "financial_bonus": financial_bonus,
+            "timestamp": self.timestamp
+        }, default=str))
+
+
+class NightRecoveryEvent(BaseEvent):
+    """v2.0: Событие ночного восстановления ресурсов агентов с экономической моделью."""
+    
+    def __init__(self, timestamp: float):
+        super().__init__(EventPriority.SYSTEM, timestamp)
+    
+    def process(self, engine: "SimulationEngine") -> None:
+        """Обработать ночное восстановление для всех агентов согласно экономической модели v2.0."""
+        try:
+            from ..common.economic_balance import economic_balance_manager
+        except ImportError:
+            logger.warning("Economic balance manager not available, skipping night recovery")
+            return
+        
+        recovery_count = 0
+        total_changes = {
+            "time_budget": 0.0,
+            "energy_level": 0.0,
+            "financial_capability": 0.0,
+            "daily_expenses": 0.0
+        }
+        
+        for agent in engine.agents:
+            changes = economic_balance_manager.perform_night_recovery(agent)
+            if changes:
+                recovery_count += 1
+                
+                # Записываем изменения в историю атрибутов
+                for attr_name, delta in changes.items():
+                    if attr_name in total_changes:
+                        total_changes[attr_name] += delta
+                    
+                    # Пропускаем служебные поля
+                    if attr_name in ["daily_expenses"]:
+                        continue
+                        
+                    old_value = getattr(agent, attr_name) - delta
+                    engine.add_to_batch_update({
+                        "type": "attribute_history",
+                        "person_id": agent.id,
+                        "simulation_id": engine.simulation_id,
+                        "attribute_name": attr_name,
+                        "old_value": old_value,
+                        "new_value": getattr(agent, attr_name),
+                        "delta": delta,
+                        "reason": "NightRecovery",
+                        "source_trend_id": None,
+                        "change_timestamp": self.timestamp
+                    })
+        
+        # Планируем следующее ночное восстановление (через 24 часа)
+        next_recovery_time = self.timestamp + 1440.0  # 24 часа = 1440 минут
+        if engine.should_schedule_future_event(next_recovery_time):
+            next_recovery = NightRecoveryEvent(timestamp=next_recovery_time)
+            engine.add_event(next_recovery, EventPriority.SYSTEM, next_recovery_time)
+        else:
+            logger.info(json.dumps({
+                "event": "night_recovery_cycle_ended",
+                "reason": "simulation_end_time_reached",
+                "timestamp": self.timestamp,
+                "end_time": engine.end_time
+            }, default=str))
+        
+        logger.info(json.dumps({
+            "event": "night_recovery_completed",
+            "recovered_agents": recovery_count,
+            "total_changes": total_changes,
             "timestamp": self.timestamp
         }, default=str))
 
@@ -435,13 +555,20 @@ class PurchaseAction(BaseEvent):
         self.purchase_level = purchase_level  # L1, L2, L3
     
     def process(self, engine: "SimulationEngine") -> None:
-        """Execute purchase action согласно ТЗ v1.9."""
+        """Execute purchase action согласно ТЗ v1.9 + v2.0 economic model."""
         from ..common.settings import action_config
         import random
         
         agent = next((a for a in engine.agents if a.id == self.agent_id), None)
         if not agent:
             return
+        
+        # v2.0: Применить затраты энергии за действие
+        # try:
+        #     from ..common.economic_balance import economic_balance_manager
+        #     energy_cost = economic_balance_manager.apply_energy_cost(agent, f"purchase_{self.purchase_level}")
+        # except ImportError:
+        #     energy_cost = 0.0
             
         # Получаем эффекты для данного уровня покупки согласно ТЗ v1.9
         effects = action_config.effects["PURCHASE"][self.purchase_level]
@@ -473,22 +600,31 @@ class PurchaseAction(BaseEvent):
         agent.actions_today += 1  # ИСПРАВЛЕНИЕ: Увеличиваем счетчик всех действий
         agent.last_purchase_ts[self.purchase_level] = self.timestamp
         
-        # ИСПРАВЛЕНИЕ: Создаем записи в person_attribute_history для каждого измененного атрибута
-        # Сохраняем изменения атрибутов в историю
+        # v2.0: Отслеживаем изменение социального статуса для экономической модели
+        try:
+            from ..common.economic_balance import economic_balance_manager
+            status_change = purchase_effects.get("social_status", 0.0)
+            if status_change != 0:
+                economic_balance_manager.track_status_change(agent, status_change)
+        except ImportError:
+            pass
+        
+        # Сохраняем изменения атрибутов в историю только для значимых изменений
         for attr_name, delta in purchase_effects.items():
-            old_value = getattr(agent, attr_name) - delta
-            engine.add_to_batch_update({
-                "type": "attribute_history",
-                "person_id": self.agent_id,
-                "simulation_id": engine.simulation_id,
-                "attribute_name": attr_name,
-                "old_value": old_value,
-                "new_value": getattr(agent, attr_name),
-                "delta": delta,
-                "reason": f"PurchaseAction_{self.purchase_level}",
-                "source_trend_id": None,
-                "change_timestamp": self.timestamp
-            })
+            if should_save_attribute_change(attr_name, delta, f"PurchaseAction_{self.purchase_level}"):
+                old_value = getattr(agent, attr_name) - delta
+                engine.add_to_batch_update({
+                    "type": "attribute_history",
+                    "person_id": self.agent_id,
+                    "simulation_id": engine.simulation_id,
+                    "attribute_name": attr_name,
+                    "old_value": old_value,
+                    "new_value": getattr(agent, attr_name),
+                    "delta": delta,
+                    "reason": f"PurchaseAction_{self.purchase_level}",
+                    "source_trend_id": None,
+                    "change_timestamp": self.timestamp
+                })
         
         # Обновляем только tracking атрибуты в simulation_participants
         engine.add_to_batch_update({
@@ -504,6 +640,59 @@ class PurchaseAction(BaseEvent):
         from ..common.metrics import record_action
         record_action("Purchase", self.purchase_level, agent.profession)
         
+        # Покупки влияют на trend_receptivity
+        # Дорогие покупки (L3) повышают восприимчивость к трендам, дешевые (L1) снижают
+        receptivity_change = 0.0
+        if self.purchase_level == "L3":
+            receptivity_change = 0.05  # дорогие покупки повышают статус и восприимчивость
+        elif self.purchase_level == "L2":
+            receptivity_change = 0.02  # средние покупки слегка повышают
+        elif self.purchase_level == "L1":
+            receptivity_change = -0.01  # дешевые покупки могут снижать статус
+        
+        if receptivity_change != 0.0:
+            old_receptivity = agent.trend_receptivity
+            agent.trend_receptivity = max(1.0, min(5.0, agent.trend_receptivity + receptivity_change))
+            
+            # Сохраняем изменения trend_receptivity с очень низкой частотой (в 30-50 раз реже)
+            save_probability = {"L3": 0.03, "L2": 0.005, "L1": 0.001}
+            should_save = random.random() < save_probability.get(self.purchase_level, 0.001)
+            
+            if should_save:
+                # Сохраняем изменение в историю
+                delta = agent.trend_receptivity - old_receptivity
+                engine.add_to_batch_update({
+                    "type": "history",
+                    "simulation_id": engine.simulation_id,
+                    "person_id": agent.id,
+                    "attribute_name": "trend_receptivity",
+                    "old_value": old_receptivity,
+                    "new_value": agent.trend_receptivity,
+                    "delta": delta,
+                    "change_timestamp": self.timestamp,
+                    "reason": f"Purchase_{self.purchase_level}",
+                    "source_trend_id": None
+                })
+                
+                logger.info(json.dumps({
+                    "event": "purchase_trend_receptivity_change",
+                    "agent_id": str(self.agent_id),
+                    "profession": agent.profession,
+                    "purchase_level": self.purchase_level,
+                    "old_receptivity": old_receptivity,
+                    "new_receptivity": agent.trend_receptivity,
+                    "change": receptivity_change,
+                    "timestamp": self.timestamp,
+                    "saved": True
+                }, default=str))
+            else:
+                logger.debug(json.dumps({
+                    "event": "purchase_trend_receptivity_change_skipped",
+                    "purchase_level": self.purchase_level,
+                    "change": receptivity_change,
+                    "timestamp": self.timestamp
+                }, default=str))
+
         logger.info(json.dumps({
             "event": "purchase_completed",
             "agent_id": str(self.agent_id),
@@ -523,12 +712,19 @@ class SelfDevAction(BaseEvent):
         self.agent_id = agent_id
     
     def process(self, engine: "SimulationEngine") -> None:
-        """Execute self-development action согласно ТЗ v1.8."""
+        """Execute self-development action согласно ТЗ v1.8 + v2.0 economic model."""
         from ..common.settings import action_config
         
         agent = next((a for a in engine.agents if a.id == self.agent_id), None)
         if not agent:
             return
+        
+        # v2.0: Применить затраты энергии за действие
+        try:
+            from ..common.economic_balance import economic_balance_manager
+            energy_cost = economic_balance_manager.apply_energy_cost(agent, "selfdev")
+        except ImportError:
+            energy_cost = 0.0
             
         # Получаем эффекты саморазвития согласно ТЗ v1.8
         effects = action_config.effects["SELF_DEV"]
@@ -540,22 +736,31 @@ class SelfDevAction(BaseEvent):
         agent.last_selfdev_ts = self.timestamp
         agent.actions_today += 1  # ИСПРАВЛЕНИЕ: Увеличиваем счетчик всех действий
         
-        # ИСПРАВЛЕНИЕ: Создаем записи в person_attribute_history для каждого измененного атрибута
-        # Сохраняем изменения атрибутов в историю
+        # v2.0: Отслеживаем изменение социального статуса для экономической модели
+        try:
+            from ..common.economic_balance import economic_balance_manager
+            status_change = effects.get("social_status", 0.0)
+            if status_change != 0:
+                economic_balance_manager.track_status_change(agent, status_change)
+        except ImportError:
+            pass
+        
+        # Сохраняем изменения атрибутов в историю только для значимых изменений
         for attr_name, delta in effects.items():
-            old_value = getattr(agent, attr_name) - delta
-            engine.add_to_batch_update({
-                "type": "attribute_history",
-                "person_id": self.agent_id,
-                "simulation_id": engine.simulation_id,
-                "attribute_name": attr_name,
-                "old_value": old_value,
-                "new_value": getattr(agent, attr_name),
-                "delta": delta,
-                "reason": "SelfDevAction",
-                "source_trend_id": None,
-                "change_timestamp": self.timestamp
-            })
+            if should_save_attribute_change(attr_name, delta, "SelfDevAction"):
+                old_value = getattr(agent, attr_name) - delta
+                engine.add_to_batch_update({
+                    "type": "attribute_history",
+                    "person_id": self.agent_id,
+                    "simulation_id": engine.simulation_id,
+                    "attribute_name": attr_name,
+                    "old_value": old_value,
+                    "new_value": getattr(agent, attr_name),
+                    "delta": delta,
+                    "reason": "SelfDevAction",
+                    "source_trend_id": None,
+                    "change_timestamp": self.timestamp
+                })
         
         # Обновляем только tracking атрибуты в simulation_participants
         engine.add_to_batch_update({
@@ -577,6 +782,17 @@ class SelfDevAction(BaseEvent):
             "time_budget_after": agent.time_budget,
             "timestamp": self.timestamp
         }, default=str))
+        
+        # Планируем проверку влияния саморазвития на trend_receptivity через 30 минут
+        # ИСПРАВЛЕНИЕ: Добавляем защиту от слишком частого планирования
+        influence_check_time = self.timestamp + 30.0  # 30 минут задержки
+        if (engine.should_schedule_future_event(influence_check_time) and 
+            (not hasattr(agent, '_last_selfdev_influence_scheduled') or
+             influence_check_time - getattr(agent, '_last_selfdev_influence_scheduled', 0) > 60.0)):  # Минимум 60 минут между проверками
+            
+            influence_event = SelfDevelopmentInfluenceEvent(influence_check_time, self.agent_id)
+            engine.add_event(influence_event, EventPriority.TREND, influence_check_time)
+            agent._last_selfdev_influence_scheduled = influence_check_time
 
 
 class SaveDailyTrendEvent(BaseEvent):
@@ -690,18 +906,86 @@ class TrendInfluenceEvent(BaseEvent):
 
     # -------------------- v1.9 helpers --------------------
     @staticmethod
-    def _calculate_reader_effects(sentiment: str, aligned: bool) -> dict[str, float]:
-        """Return attribute deltas based on sentiment matrix from tech_v1.9."""
-        # Восприимчивость (trend_receptivity) - ИСПРАВЛЕНИЕ: Защита от NaN
-        receptivity_delta = 0.01 if (aligned or sentiment == "Negative") else 0.0
+    def _calculate_reader_effects(sentiment: str, aligned: bool, agent_profession: str = None, engine=None) -> dict[str, float]:
+        """Return attribute deltas based on sentiment matrix from tech_v1.9 with professional differentiation."""
+        
+        # Профессиональные множители для trend_receptivity (увеличены для более активных изменений)
+        profession_multipliers = {
+            "Blogger": 1.8,      # очень высокая восприимчивость
+            "Artist": 1.6,       # творческая натура, высокая восприимчивость
+            "Unemployed": 1.5,   # много времени на тренды
+            "Politician": 1.4,   # нужно следить за общественным мнением
+            "Businessman": 1.3,  # активное участие в социальных процессах
+            "ShopClerk": 1.2,    # контакт с людьми
+            "Worker": 1.1,       # практичность, но восприимчивость
+            "Developer": 1.0,    # техническое мышление, базовый уровень
+            "Teacher": 1.0,      # умеренная консервативность
+            "Philosopher": 0.9,  # критическое мышление
+            "SpiritualMentor": 0.9,  # духовная стабильность
+            "Doctor": 0.8        # профессиональная осторожность
+        }
+        
+        # Определяем базовую дельту в зависимости от сентимента и соответствия интересов (увеличены для более активных изменений)
+        if sentiment == "Positive":
+            if aligned:
+                base_receptivity_delta = 0.3  # Очень сильное положительное влияние
+            else:
+                base_receptivity_delta = 0.15 # Умеренное положительное влияние
+        else: # sentiment == "Negative"
+            if aligned:
+                base_receptivity_delta = -0.1 # Слабое отрицательное влияние (даже при совпадении интересов)
+            else:
+                base_receptivity_delta = -0.2 # Сильное отрицательное влияние
+
+        # Применяем профессиональный множитель
+        profession_multiplier = profession_multipliers.get(agent_profession, 1.0)
+        
+        # Добавляем влияние социального статуса (высокий статус = больше влияния трендов)
+        # Получаем агента для доступа к его атрибутам
+        agent = next((a for a in engine.agents if a.profession == agent_profession), None)
+        social_status_multiplier = 1.0
+        if agent:
+            # Социальный статус влияет на восприимчивость к трендам
+            # Высокий статус (4-5) = +20% к изменениям, низкий (1-2) = -10%
+            if agent.social_status >= 4.0:
+                social_status_multiplier = 1.2
+            elif agent.social_status >= 3.0:
+                social_status_multiplier = 1.1
+            elif agent.social_status <= 2.0:
+                social_status_multiplier = 0.9
+            
+            # Финансовые возможности также влияют (богатые более восприимчивы к позитивным трендам)
+            if sentiment == "Positive" and agent.financial_capability >= 4.0:
+                social_status_multiplier *= 1.1
+            elif sentiment == "Negative" and agent.financial_capability <= 2.0:
+                social_status_multiplier *= 1.1  # бедные более восприимчивы к негативным трендам
+        
+        receptivity_delta = base_receptivity_delta * profession_multiplier * social_status_multiplier
+        
+        # Защита от NaN
         if math.isnan(receptivity_delta) or math.isinf(receptivity_delta):
             receptivity_delta = 0.0
 
-        # Энергия
+        # Энергия (без изменений)
         if sentiment == "Positive":
             energy_delta = 0.02 if aligned else 0.015
         else:  # Negative
             energy_delta = -0.015 if aligned else -0.01
+
+        # Логирование изменений trend_receptivity для отслеживания
+        if receptivity_delta != 0.0:
+            from capsim.common.logging_config import get_logger
+            import json
+            logger = get_logger(__name__)
+            logger.debug(json.dumps({
+                "event": "trend_receptivity_change_calculated",
+                "profession": agent_profession,
+                "sentiment": sentiment,
+                "aligned": aligned,
+                "base_delta": base_receptivity_delta,
+                "profession_multiplier": profession_multiplier,
+                "final_delta": receptivity_delta
+            }, default=str))
 
         return {
             "trend_receptivity": receptivity_delta,
@@ -779,15 +1063,24 @@ class TrendInfluenceEvent(BaseEvent):
         influenced_agents_count = 0
         
         # ИСПРАВЛЕНИЕ: Радикально уменьшаем вероятность ответа, чтобы остановить лавину
-        likeliness_to_respond = 0.05  # было 0.2
+        likeliness_to_respond = 0.1  # было 0.2
         
         for agent in potential_audience:
             if agent.id == trend.originator_id:
                 continue # Автор не влияет сам на себя
 
             # Проверяем, может ли агент вообще увидеть этот тренд
-            # ИСПРАВЛЕНИЕ: Порог affinity теперь >= 2.5
-            if agent.trend_receptivity > 0.5 and agent.get_affinity_for_topic(trend.topic) >= 2.5:
+            # ИСПРАВЛЕНИЕ: Снижен порог trend_receptivity с 0.5 до 0.1 для большего участия
+            logger.debug(json.dumps({
+                    "event": "trend_influence_check",
+                    "agent_id": str(agent.id),
+                    "profession": agent.profession,
+                    "trend_id": str(trend.trend_id),
+                    "agent_trend_receptivity": agent.trend_receptivity,
+                    "agent_affinity_for_topic": agent.get_affinity_for_topic(trend.topic),
+                    "timestamp": self.timestamp
+                }, default=str))
+            if agent.trend_receptivity > 0.1 and agent.get_affinity_for_topic(trend.topic) >= 1.0:
                 # Определяем соответствие интересов
                 from capsim.common.topic_mapping import topic_to_interest_category
                 try:
@@ -800,8 +1093,17 @@ class TrendInfluenceEvent(BaseEvent):
                     interest_value = agent.interests.get(interest_category, 0.0)
                     aligned = interest_value > 3.0
 
-                # Рассчитываем дельты по новой матрице
-                attribute_changes = self._calculate_reader_effects(trend.sentiment, aligned)
+                # Рассчитываем дельты по новой матрице с учетом профессии
+                attribute_changes = self._calculate_reader_effects(trend.sentiment, aligned, agent.profession, engine)
+
+                logger.debug(json.dumps({
+                    "event": "trend_receptivity_delta_calculated",
+                    "agent_id": str(agent.id),
+                    "profession": agent.profession,
+                    "trend_id": str(trend.trend_id),
+                    "receptivity_delta_calculated": attribute_changes.get("trend_receptivity", 0.0),
+                    "timestamp": self.timestamp
+                }, default=str))
 
                 # Создаем пакет updatestate для агента
                 update_state = {
@@ -814,7 +1116,55 @@ class TrendInfluenceEvent(BaseEvent):
                 update_states.append(update_state)
                 
                 # Применяем изменения к агенту
+                old_receptivity = agent.trend_receptivity - attribute_changes.get("trend_receptivity", 0.0)
                 agent.update_state(attribute_changes)
+                
+                # Логируем изменение trend_receptivity для отслеживания
+                if attribute_changes.get("trend_receptivity", 0.0) != 0.0:
+                    delta = agent.trend_receptivity - old_receptivity
+                    
+                    # Сохраняем изменения trend_receptivity с очень низкой частотой (в 50-100 раз реже)
+                    # Только критически значительные изменения (|delta| >= 0.8) или с вероятностью 0.02%
+                    should_save = abs(delta) >= 0.8 or random.random() < 0.0002
+                    
+                    if should_save:
+                        logger.info(json.dumps({
+                            "event": "trend_receptivity_changed",
+                            "agent_id": str(agent.id),
+                            "profession": agent.profession,
+                            "trend_id": str(trend.trend_id),
+                            "trend_sentiment": trend.sentiment,
+                            "aligned": aligned,
+                            "old_receptivity": round(old_receptivity, 3),
+                            "new_receptivity": round(agent.trend_receptivity, 3),
+                            "delta": round(delta, 3),
+                            "reason": "TrendInfluence",
+                            "timestamp": self.timestamp,
+                            "saved": True
+                        }, default=str))
+                        
+                        # Сохраняем изменение trend_receptivity в историю
+                        engine.add_to_batch_update({
+                            "type": "history",
+                            "simulation_id": engine.simulation_id,
+                            "person_id": agent.id,
+                            "attribute_name": "trend_receptivity",
+                            "old_value": old_receptivity,
+                            "new_value": agent.trend_receptivity,
+                            "delta": delta,
+                            "change_timestamp": self.timestamp,
+                            "reason": "TrendInfluence",
+                            "source_trend_id": trend.trend_id
+                        })
+                    else:
+                        # Логируем пропущенное изменение для статистики
+                        logger.debug(json.dumps({
+                            "event": "trend_receptivity_change_skipped",
+                            "agent_id": str(agent.id),
+                            "delta": round(delta, 3),
+                            "reason": "below_threshold",
+                            "timestamp": self.timestamp
+                        }, default=str))
                 
                 # Добавляем взаимодействие с трендом
                 trend.add_interaction()
@@ -910,3 +1260,123 @@ class TrendInfluenceEvent(BaseEvent):
         }, default=str))
 
         # События будут сохранены в batch commit 
+
+
+class SelfDevelopmentInfluenceEvent(BaseEvent):
+    """Событие влияния саморазвития на восприимчивость к трендам."""
+    
+    def __init__(self, timestamp: float, agent_id: UUID):
+        super().__init__(EventPriority.TREND, timestamp)
+        self.agent_id = agent_id
+
+    def process(self, engine):
+        """Обрабатывает влияние саморазвития на trend_receptivity агента."""
+        from capsim.common.logging_config import get_logger
+        import json
+        
+        logger = get_logger(__name__)
+        
+        # Находим агента
+        agent = next((a for a in engine.agents if a.id == self.agent_id), None)
+        if not agent:
+            return
+            
+        # Проверяем активность саморазвития за последние 24 часа
+        recent_selfdev_count = self._count_recent_selfdev_actions(engine, agent.id, self.timestamp)
+        
+        if recent_selfdev_count >= 3:  # Критерий высокой динамики
+            # Профессиональные множители для эффекта саморазвития
+            profession_multipliers = {
+                "Doctor": 1.3,      # усиленный эффект
+                "Teacher": 1.3,     # усиленный эффект
+                "Blogger": 0.7,     # сниженный эффект
+                "Artist": 0.8,      # творческим натурам сложнее снизить восприимчивость
+                "Unemployed": 1.1,  # больше времени на саморазвитие
+            }
+            
+            # Увеличиваем влияние саморазвития на trend_receptivity
+            base_reduction = -0.08  # увеличенное базовое снижение
+            profession_multipliers = {
+                "Blogger": 1.5,      # творческие профессии сильнее реагируют на саморазвитие
+                "Artist": 1.4,       
+                "SpiritualMentor": 1.3,  # духовные профессии развиваются активнее
+                "Philosopher": 1.2,  
+                "Teacher": 1.1,      # образовательные профессии
+                "Developer": 1.0,    # технические профессии
+                "Doctor": 1.0,       
+                "Politician": 0.9,   # политики менее подвержены изменениям от саморазвития
+                "Businessman": 0.9,  
+                "Worker": 0.8,       # рабочие профессии
+                "ShopClerk": 0.8,    
+                "Unemployed": 0.7    # безработные меньше развиваются
+            }
+            profession_multiplier = profession_multipliers.get(agent.profession, 1.0)
+            receptivity_delta = base_reduction * profession_multiplier
+            
+            # Применяем изменения
+            attribute_changes = {
+                "trend_receptivity": receptivity_delta
+            }
+            
+            update_state = {
+                "agent_id": agent.id,
+                "attribute_changes": attribute_changes,
+                "reason": "SelfDevelopmentInfluence",
+                "timestamp": self.timestamp
+            }
+            
+            # Применяем изменения к агенту в памяти
+            agent.update_state(attribute_changes)
+            
+            # Обрабатываем через движок
+            engine._process_update_state_batch([update_state])
+            
+            logger.info(json.dumps({
+                "event": "self_development_influence_applied",
+                "agent_id": str(agent.id),
+                "profession": agent.profession,
+                "recent_selfdev_count": recent_selfdev_count,
+                "receptivity_delta": receptivity_delta,
+                "new_receptivity": agent.trend_receptivity,
+                "timestamp": self.timestamp
+            }, default=str))
+            
+            # Сохраняем изменение trend_receptivity в историю с очень низкой частотой (в 100-200 раз реже)
+            if receptivity_delta != 0.0 and random.random() < 0.005:
+                old_receptivity = agent.trend_receptivity - receptivity_delta
+                engine.add_to_batch_update({
+                    "type": "history",
+                    "simulation_id": engine.simulation_id,
+                    "person_id": agent.id,
+                    "attribute_name": "trend_receptivity",
+                    "old_value": old_receptivity,
+                    "new_value": agent.trend_receptivity,
+                    "delta": receptivity_delta,
+                    "change_timestamp": self.timestamp,
+                    "reason": "SelfDevelopment",
+                    "source_trend_id": None
+                })
+    
+    def _count_recent_selfdev_actions(self, engine, agent_id: UUID, current_time: float) -> int:
+        """Подсчитывает количество действий саморазвития за последние 24 часа."""
+        # ИСПРАВЛЕНИЕ: Упрощенная логика для избежания зависания
+        # Используем только информацию из памяти агента
+        try:
+            agent = next((a for a in engine.agents if a.id == agent_id), None)
+            if not agent:
+                return 0
+                
+            # Простая эвристика: если агент недавно делал саморазвитие, считаем что он активен
+            if hasattr(agent, 'last_selfdev_ts') and agent.last_selfdev_ts:
+                time_since_last = current_time - agent.last_selfdev_ts
+                if time_since_last < 120.0:  # Последние 2 часа
+                    return 4  # Считаем высокой активностью
+                elif time_since_last < 480.0:  # Последние 8 часов  
+                    return 2  # Средняя активность
+                else:
+                    return 0  # Низкая активность
+            
+            return 0
+        except Exception as e:
+            # В случае любой ошибки возвращаем 0 чтобы не блокировать симуляцию
+            return 0
