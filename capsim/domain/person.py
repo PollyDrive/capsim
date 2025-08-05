@@ -492,25 +492,35 @@ class Person:
                     post_score = 0.3
                 else:
                     post_score = (
-                        virality * (self.trend_receptivity + 0.5) / 25  # Add a small constant to trend_receptivity
+                        virality * (self.trend_receptivity + 0.5) / 35  # Уменьшаем с 25 до 35 для снижения веса постов
                         * (1 + self.social_status / 10)  # Согласно ТЗ
                     )
             else:
-                post_score = 0.3  # Базовый score для постов без тренда
+                post_score = 0.3  # Возвращаем исходный базовый score для постов
             actions.append(("Post", post_score))
         
         # PURCHASE logic (L1/L2/L3) - согласно ТЗ v1.8
         for level in ["L1", "L2", "L3"]:
             if self.can_purchase(current_time, level):
-                # ИСПРАВЛЕНИЕ: Снижаем базовый score покупок с 0.3 до 0.1
-                score = 0.1 * getattr(action_config, 'shop_weights', {}).get(self.profession, 1.0)  # Согласно ТЗ
+                # Умеренно увеличиваем вес дешевых покупок (L1), оставляем низкий для дорогих (L2, L3)
+                if level == "L1":
+                    base_score = 0.125  # Умеренное увеличение для дешевых покупок
+                elif level == "L2":
+                    base_score = 0.08  # Снижаем для средних покупок
+                else:  # L3
+                    base_score = 0.05  # Снижаем для дорогих покупок
+                
+                score = base_score * getattr(action_config, 'shop_weights', {}).get(self.profession, 1.0)  # Согласно ТЗ
                 if trend and hasattr(trend, 'topic') and trend.topic == "Economic":
                     score *= 1.2  # Согласно ТЗ
                 actions.append((f"Purchase_{level}", score))
         
         # SELF_DEV logic - согласно ТЗ v1.8
         if self.can_self_dev(current_time):
-            score = max(0.0, 1 - self.energy_level / 5)  # Согласно ТЗ
+            # Увеличиваем базовый вес саморазвития и делаем его менее зависимым от энергии
+            base_score = 0.4  # Увеличиваем базовый вес саморазвития
+            energy_factor = max(0.3, 1 - self.energy_level / 5)  # Минимум 0.3 даже при высокой энергии
+            score = base_score * energy_factor
             actions.append(("SelfDev", score))
         
         # Weighted selection согласно ТЗ

@@ -754,6 +754,7 @@ class SimulationEngine:
                     "law_type": getattr(event, 'law_type', None),
                     "weather_type": getattr(event, 'weather_type', None),
                     "recovered_agents": getattr(event, 'recovered_agent_ids', None),
+                    "purchase_level": getattr(event, 'purchase_level', None),  # Добавляем уровень покупки для PurchaseAction
                     "event_id": str(event.event_id),
                     "sim_time": event.timestamp,
                     "real_time": event.timestamp_real
@@ -974,7 +975,7 @@ class SimulationEngine:
             self._daily_action_counts = {}
             
         current_count = self._daily_action_counts.get(day_key, 0)
-        daily_limit = 20  # ИСПРАВЛЕНИЕ: Снижаем лимит для предотвращения чрезмерной активности
+        daily_limit = 60  # Увеличиваем лимит до 60 действий в день (2.5 действия/час)
         
         can_act = current_count < daily_limit
         
@@ -1780,11 +1781,11 @@ class SimulationEngine:
         # Распределяем действия равномерно по времени дня
         actions_per_minute = max_daily_actions / day_duration if day_duration > 0 else 0
         
-        # ИСПРАВЛЕНИЕ: Сильно ограничиваем действия для предотвращения чрезмерной активности
+        # Увеличиваем активность агентов для достижения 2-3 действий в час
         max_actions_this_cycle = min(
             len(eligible_agents),
-            max(1, int(len(eligible_agents) * 0.1)),  # Максимум 10% агентов за цикл (было 50%)
-            5  # Абсолютный максимум 5 действий за цикл
+            max(1, int(len(eligible_agents) * 0.6)),  # Максимум 60% агентов за цикл
+            30  # Абсолютный максимум 30 действий за цикл
         )
         
         selected_agents = random.sample(eligible_agents, min(max_actions_this_cycle, len(eligible_agents)))

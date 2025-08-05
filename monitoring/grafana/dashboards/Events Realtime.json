@@ -116,7 +116,24 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "continuous-GrYlRd"
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            }
           },
           "mappings": [],
           "thresholds": {
@@ -141,20 +158,28 @@
         "x": 12,
         "y": 0
       },
-      "id": 17,
+      "id": 23,
       "options": {
-        "displayMode": "lcd",
-        "minVizHeight": 10,
-        "minVizWidth": 0,
-        "orientation": "horizontal",
-        "reduceOptions": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
           "calcs": [],
-          "fields": "",
-          "values": true
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
         },
-        "showUnfilled": true
+        "orientation": "auto",
+        "showValue": "auto",
+        "stacking": "none",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
       },
-      "pluginVersion": "9.2.0",
       "targets": [
         {
           "datasource": {
@@ -162,33 +187,12 @@
             "uid": "Postgres"
           },
           "format": "table",
-          "group": [],
-          "metricColumn": "none",
-          "rawQuery": true,
-          "rawSql": "WITH last_sim AS (SELECT run_id FROM capsim.simulation_runs ORDER BY start_time DESC LIMIT 1), start_end_values AS (SELECT DISTINCT ON (person_id, attribute_name) person_id, attribute_name, FIRST_VALUE(old_value) OVER (PARTITION BY person_id, attribute_name ORDER BY change_timestamp ASC) as start_value, LAST_VALUE(new_value) OVER (PARTITION BY person_id, attribute_name ORDER BY change_timestamp ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as end_value FROM capsim.person_attribute_history WHERE simulation_id = (SELECT run_id FROM last_sim)) SELECT attribute_name as metric, ROUND(((AVG(end_value) - AVG(start_value)) / NULLIF(AVG(start_value), 0) * 100)::NUMERIC, 1) as change_percent FROM start_end_values GROUP BY attribute_name",
-          "refId": "A",
-          "select": [
-            [
-              {
-                "params": [
-                  "value"
-                ],
-                "type": "column"
-              }
-            ]
-          ],
-          "timeColumn": "time",
-          "where": [
-            {
-              "name": "$__timeFilter",
-              "params": [],
-              "type": "macro"
-            }
-          ]
+          "rawSql": "WITH last_sim AS (SELECT run_id FROM capsim.simulation_runs ORDER BY start_time DESC LIMIT 1)\nSELECT \n  p.profession,\n  COUNT(*) as post_count\nFROM capsim.trends t\nJOIN capsim.persons p ON t.originator_id = p.id\nWHERE t.simulation_id = (SELECT run_id FROM last_sim)\nGROUP BY p.profession\nORDER BY post_count DESC",
+          "refId": "A"
         }
       ],
-      "title": " Attribute Changes Summary",
-      "type": "bargauge"
+      "title": "👥 Post Activity by Profession",
+      "type": "barchart"
     },
     {
       "datasource": {
@@ -217,7 +221,7 @@
       },
       "gridPos": {
         "h": 3,
-        "w": 4,
+        "w": 3,
         "x": 0,
         "y": 5
       },
@@ -298,8 +302,8 @@
       },
       "gridPos": {
         "h": 3,
-        "w": 4,
-        "x": 4,
+        "w": 3,
+        "x": 3,
         "y": 5
       },
       "id": 12,
@@ -379,8 +383,8 @@
       },
       "gridPos": {
         "h": 3,
-        "w": 4,
-        "x": 8,
+        "w": 3,
+        "x": 6,
         "y": 5
       },
       "id": 6,
@@ -420,6 +424,66 @@
       },
       "fieldConfig": {
         "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 3,
+        "x": 9,
+        "y": 5
+      },
+      "id": 8,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "9.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "Postgres"
+          },
+          "format": "table",
+          "rawSql": "SELECT count(*) FROM capsim.trends",
+          "refId": "A"
+        }
+      ],
+      "title": "Trends Count",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "Postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
           "color": {
             "mode": "thresholds"
           },
@@ -446,8 +510,8 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 4,
-        "w": 4,
+        "h": 3,
+        "w": 3,
         "x": 0,
         "y": 8
       },
@@ -514,9 +578,9 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 4,
+        "h": 3,
+        "w": 3,
+        "x": 3,
         "y": 8
       },
       "id": 14,
@@ -582,9 +646,9 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 8,
+        "h": 3,
+        "w": 3,
+        "x": 6,
         "y": 8
       },
       "id": 15,
@@ -625,24 +689,75 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "thresholds"
           },
-          "custom": {
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "fillOpacity": 80,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineWidth": 1,
-            "scaleDistribution": {
-              "type": "linear"
-            }
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 2
+              },
+              {
+                "color": "red",
+                "value": 4
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 3,
+        "x": 9,
+        "y": 8
+      },
+      "id": 25,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "9.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "Postgres"
+          },
+          "format": "table",
+          "rawSql": "WITH last_sim AS (SELECT run_id FROM capsim.simulation_runs ORDER BY start_time DESC LIMIT 1)\nSELECT \n  ROUND(AVG(t.base_virality_score)::NUMERIC, 2) as avg_virality\nFROM capsim.trends t\nWHERE t.simulation_id = (SELECT run_id FROM last_sim)",
+          "refId": "A"
+        }
+      ],
+      "title": "🔥 Average Virality Score",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "Postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "continuous-GrYlRd"
           },
           "mappings": [],
           "thresholds": {
@@ -662,33 +777,25 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 9,
+        "h": 7,
         "w": 12,
         "x": 12,
         "y": 8
       },
-      "id": 23,
+      "id": 17,
       "options": {
-        "barRadius": 0,
-        "barWidth": 0.97,
-        "fullHighlight": false,
-        "groupWidth": 0.7,
-        "legend": {
+        "displayMode": "lcd",
+        "minVizHeight": 10,
+        "minVizWidth": 0,
+        "orientation": "horizontal",
+        "reduceOptions": {
           "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
+          "fields": "",
+          "values": true
         },
-        "orientation": "auto",
-        "showValue": "auto",
-        "stacking": "none",
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        },
-        "xTickLabelRotation": 0,
-        "xTickLabelSpacing": 0
+        "showUnfilled": true
       },
+      "pluginVersion": "9.2.0",
       "targets": [
         {
           "datasource": {
@@ -696,12 +803,33 @@
             "uid": "Postgres"
           },
           "format": "table",
-          "rawSql": "WITH last_sim AS (SELECT run_id FROM capsim.simulation_runs ORDER BY start_time DESC LIMIT 1)\nSELECT \n  p.profession,\n  COUNT(*) as post_count\nFROM capsim.trends t\nJOIN capsim.persons p ON t.originator_id = p.id\nWHERE t.simulation_id = (SELECT run_id FROM last_sim)\nGROUP BY p.profession\nORDER BY post_count DESC",
-          "refId": "A"
+          "group": [],
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "WITH last_sim AS (SELECT run_id FROM capsim.simulation_runs ORDER BY start_time DESC LIMIT 1), start_end_values AS (SELECT DISTINCT ON (person_id, attribute_name) person_id, attribute_name, FIRST_VALUE(old_value) OVER (PARTITION BY person_id, attribute_name ORDER BY change_timestamp ASC) as start_value, LAST_VALUE(new_value) OVER (PARTITION BY person_id, attribute_name ORDER BY change_timestamp ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as end_value FROM capsim.person_attribute_history WHERE simulation_id = (SELECT run_id FROM last_sim)) SELECT attribute_name as metric, ROUND(((AVG(end_value) - AVG(start_value)) / NULLIF(AVG(start_value), 0) * 100)::NUMERIC, 1) as change_percent FROM start_end_values GROUP BY attribute_name",
+          "refId": "A",
+          "select": [
+            [
+              {
+                "params": [
+                  "value"
+                ],
+                "type": "column"
+              }
+            ]
+          ],
+          "timeColumn": "time",
+          "where": [
+            {
+              "name": "$__timeFilter",
+              "params": [],
+              "type": "macro"
+            }
+          ]
         }
       ],
-      "title": "👥 Post Activity by Profession",
-      "type": "barchart"
+      "title": " Attribute Changes Summary",
+      "type": "bargauge"
     },
     {
       "datasource": {
@@ -732,10 +860,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 5,
-        "w": 7,
-        "x": 5,
-        "y": 12
+        "h": 4,
+        "w": 9,
+        "x": 0,
+        "y": 11
       },
       "id": 3,
       "options": {
@@ -770,15 +898,149 @@
     },
     {
       "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
+        "type": "postgres",
+        "uid": "Postgres"
       },
       "fieldConfig": {
         "defaults": {
-          "custom": {
-            "align": "auto",
-            "displayMode": "auto",
-            "inspect": false
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 50
+              },
+              {
+                "color": "red",
+                "value": 100
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 2,
+        "w": 3,
+        "x": 9,
+        "y": 11
+      },
+      "id": 26,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "9.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "Postgres"
+          },
+          "format": "table",
+          "rawSql": "WITH last_sim AS (SELECT run_id FROM capsim.simulation_runs ORDER BY start_time DESC LIMIT 1)\nSELECT \n  SUM(t.total_interactions) as total_interactions\nFROM capsim.trends t\nWHERE t.simulation_id = (SELECT run_id FROM last_sim)",
+          "refId": "A"
+        }
+      ],
+      "title": "💬 Total Trend Interactions",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "Postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 10
+              },
+              {
+                "color": "red",
+                "value": 20
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 2,
+        "w": 3,
+        "x": 9,
+        "y": 13
+      },
+      "id": 28,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "9.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "Postgres"
+          },
+          "format": "table",
+          "rawSql": "WITH last_sim AS (SELECT run_id FROM capsim.simulation_runs ORDER BY start_time DESC LIMIT 1)\nSELECT \n  COUNT(DISTINCT t.originator_id) as unique_authors\nFROM capsim.trends t\nWHERE t.simulation_id = (SELECT run_id FROM last_sim)",
+          "refId": "A"
+        }
+      ],
+      "title": "✍️ Unique Content Authors",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "Postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "continuous-GrYlRd"
           },
           "mappings": [],
           "thresholds": {
@@ -798,34 +1060,59 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 3,
-        "w": 24,
+        "h": 8,
+        "w": 9,
         "x": 0,
-        "y": 17
+        "y": 15
       },
-      "id": 1,
+      "id": 22,
       "options": {
-        "footer": {
+        "displayMode": "lcd",
+        "minVizHeight": 10,
+        "minVizWidth": 0,
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [],
           "fields": "",
-          "reducer": [
-            "sum"
-          ],
-          "show": false
+          "values": true
         },
-        "showHeader": true
+        "showUnfilled": true
       },
       "pluginVersion": "9.2.0",
       "targets": [
         {
           "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
+            "type": "postgres",
+            "uid": "Postgres"
           },
-          "refId": "A"
+          "format": "table",
+          "group": [],
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "WITH last_sim AS (SELECT run_id FROM capsim.simulation_runs ORDER BY start_time DESC LIMIT 1)\nSELECT \n  t.topic,\n  t.sentiment,\n  COUNT(*) as post_count\nFROM capsim.trends t\nWHERE t.simulation_id = (SELECT run_id FROM last_sim)\nGROUP BY t.topic, t.sentiment\nORDER BY t.topic, t.sentiment",
+          "refId": "A",
+          "select": [
+            [
+              {
+                "params": [
+                  "value"
+                ],
+                "type": "column"
+              }
+            ]
+          ],
+          "timeColumn": "time",
+          "where": [
+            {
+              "name": "$__timeFilter",
+              "params": [],
+              "type": "macro"
+            }
+          ]
         }
       ],
-      "title": "Connection Utilization %",
-      "type": "table"
+      "title": "📈 Sentiment vs Topic Analysis",
+      "type": "bargauge"
     },
     {
       "datasource": {
@@ -849,10 +1136,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 9,
-        "w": 5,
-        "x": 0,
-        "y": 20
+        "h": 8,
+        "w": 7,
+        "x": 9,
+        "y": 15
       },
       "id": 29,
       "options": {
@@ -921,270 +1208,6 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 10
-              },
-              {
-                "color": "red",
-                "value": 20
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 3,
-        "w": 3,
-        "x": 5,
-        "y": 20
-      },
-      "id": 28,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "pluginVersion": "9.2.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "Postgres"
-          },
-          "format": "table",
-          "rawSql": "WITH last_sim AS (SELECT run_id FROM capsim.simulation_runs ORDER BY start_time DESC LIMIT 1)\nSELECT \n  COUNT(DISTINCT t.originator_id) as unique_authors\nFROM capsim.trends t\nWHERE t.simulation_id = (SELECT run_id FROM last_sim)",
-          "refId": "A"
-        }
-      ],
-      "title": "✍️ Unique Content Authors",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "postgres",
-        "uid": "Postgres"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 3,
-        "w": 2,
-        "x": 8,
-        "y": 20
-      },
-      "id": 8,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "pluginVersion": "9.2.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "Postgres"
-          },
-          "format": "table",
-          "rawSql": "SELECT count(*) FROM capsim.trends",
-          "refId": "A"
-        }
-      ],
-      "title": "Trends Count",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "postgres",
-        "uid": "Postgres"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 2
-              },
-              {
-                "color": "red",
-                "value": 4
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 3,
-        "w": 3,
-        "x": 10,
-        "y": 20
-      },
-      "id": 25,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "pluginVersion": "9.2.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "Postgres"
-          },
-          "format": "table",
-          "rawSql": "WITH last_sim AS (SELECT run_id FROM capsim.simulation_runs ORDER BY start_time DESC LIMIT 1)\nSELECT \n  ROUND(AVG(t.base_virality_score)::NUMERIC, 2) as avg_virality\nFROM capsim.trends t\nWHERE t.simulation_id = (SELECT run_id FROM last_sim)",
-          "refId": "A"
-        }
-      ],
-      "title": "🔥 Average Virality Score",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "postgres",
-        "uid": "Postgres"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 50
-              },
-              {
-                "color": "red",
-                "value": 100
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 3,
-        "w": 3,
-        "x": 13,
-        "y": 20
-      },
-      "id": 26,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "pluginVersion": "9.2.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "Postgres"
-          },
-          "format": "table",
-          "rawSql": "WITH last_sim AS (SELECT run_id FROM capsim.simulation_runs ORDER BY start_time DESC LIMIT 1)\nSELECT \n  SUM(t.total_interactions) as total_interactions\nFROM capsim.trends t\nWHERE t.simulation_id = (SELECT run_id FROM last_sim)",
-          "refId": "A"
-        }
-      ],
-      "title": "💬 Total Trend Interactions",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "postgres",
-        "uid": "Postgres"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
             "mode": "continuous-GrYlRd"
           },
           "mappings": [],
@@ -1208,7 +1231,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 20
+        "y": 15
       },
       "id": 21,
       "options": {
@@ -1267,7 +1290,12 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "continuous-GrYlRd"
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto",
+            "inspect": false
           },
           "mappings": [],
           "thresholds": {
@@ -1284,26 +1312,62 @@
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "level"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 71
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "profession"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 121
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "purchase_count"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 100
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
-        "h": 6,
-        "w": 11,
-        "x": 5,
+        "h": 17,
+        "w": 5,
+        "x": 0,
         "y": 23
       },
-      "id": 22,
+      "id": 32,
       "options": {
-        "displayMode": "lcd",
-        "minVizHeight": 10,
-        "minVizWidth": 0,
-        "orientation": "horizontal",
-        "reduceOptions": {
-          "calcs": [],
+        "footer": {
           "fields": "",
-          "values": true
+          "reducer": [
+            "sum"
+          ],
+          "show": false
         },
-        "showUnfilled": true
+        "showHeader": true,
+        "sortBy": []
       },
       "pluginVersion": "9.2.0",
       "targets": [
@@ -1316,7 +1380,7 @@
           "group": [],
           "metricColumn": "none",
           "rawQuery": true,
-          "rawSql": "WITH last_sim AS (SELECT run_id FROM capsim.simulation_runs ORDER BY start_time DESC LIMIT 1)\nSELECT \n  t.topic,\n  t.sentiment,\n  COUNT(*) as post_count\nFROM capsim.trends t\nWHERE t.simulation_id = (SELECT run_id FROM last_sim)\nGROUP BY t.topic, t.sentiment\nORDER BY t.topic, t.sentiment",
+          "rawSql": "WITH last_sim AS (SELECT run_id FROM capsim.simulation_runs ORDER BY start_time DESC LIMIT 1) SELECT p.profession, COALESCE(e.event_data->>'purchase_level', 'Unknown') as level, COUNT(*) as purchase_count FROM capsim.events e JOIN capsim.persons p ON e.agent_id = p.id WHERE e.simulation_id = (SELECT run_id FROM last_sim) AND e.event_type = 'PurchaseAction' GROUP BY p.profession, e.event_data->>'purchase_level' ORDER BY p.profession, level",
           "refId": "A",
           "select": [
             [
@@ -1338,8 +1402,116 @@
           ]
         }
       ],
-      "title": "📈 Sentiment vs Topic Analysis",
-      "type": "bargauge"
+      "title": "🛒 Purchase Actions by Profession & Level",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "Postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 11,
+        "x": 5,
+        "y": 23
+      },
+      "id": 31,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "orientation": "horizontal",
+        "showValue": "never",
+        "stacking": "none",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "pluginVersion": "9.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "Postgres"
+          },
+          "format": "table",
+          "group": [],
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "WITH last_sim AS (SELECT run_id FROM capsim.simulation_runs ORDER BY start_time DESC LIMIT 1) SELECT p.profession, COUNT(*) as selfdev_actions FROM capsim.events e JOIN capsim.persons p ON e.agent_id = p.id WHERE e.simulation_id = (SELECT run_id FROM last_sim) AND e.event_type = 'SelfDevAction' GROUP BY p.profession ORDER BY selfdev_actions DESC",
+          "refId": "A",
+          "select": [
+            [
+              {
+                "params": [
+                  "value"
+                ],
+                "type": "column"
+              }
+            ]
+          ],
+          "timeColumn": "time",
+          "where": [
+            {
+              "name": "$__timeFilter",
+              "params": [],
+              "type": "macro"
+            }
+          ]
+        }
+      ],
+      "title": "📚 Self-Development Actions by Profession",
+      "type": "barchart"
     },
     {
       "datasource": {
@@ -1371,10 +1543,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 19,
+        "h": 17,
         "w": 8,
         "x": 16,
-        "y": 28
+        "y": 23
       },
       "id": 18,
       "options": {
@@ -1431,196 +1603,6 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "continuous-GrYlRd"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 5,
-        "x": 0,
-        "y": 29
-      },
-      "id": 30,
-      "options": {
-        "displayMode": "basic",
-        "minVizHeight": 10,
-        "minVizWidth": 0,
-        "orientation": "horizontal",
-        "reduceOptions": {
-          "calcs": [],
-          "fields": "",
-          "values": true
-        },
-        "showUnfilled": true
-      },
-      "pluginVersion": "9.2.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "Postgres"
-          },
-          "format": "table",
-          "group": [],
-          "metricColumn": "none",
-          "rawQuery": true,
-          "rawSql": "WITH last_sim AS (SELECT run_id FROM capsim.simulation_runs ORDER BY start_time DESC LIMIT 1)\nSELECT \n  'Unique Topics' as metric,\n  COUNT(DISTINCT t.topic) as value\nFROM capsim.trends t\nWHERE t.simulation_id = (SELECT run_id FROM last_sim)\n\nUNION ALL\n\nSELECT \n  'Posts per Topic Avg' as metric,\n  ROUND((COUNT(t.trend_id)::NUMERIC / NULLIF(COUNT(DISTINCT t.topic), 0)), 1) as value\nFROM capsim.trends t\nWHERE t.simulation_id = (SELECT run_id FROM last_sim)\n\nUNION ALL\n\nSELECT \n  'Most Popular Topic Posts' as metric,\n  COALESCE(MAX(topic_count), 0) as value\nFROM (\n  SELECT COUNT(*) as topic_count\n  FROM capsim.trends t\n  WHERE t.simulation_id = (SELECT run_id FROM last_sim)\n  GROUP BY t.topic\n) topic_stats",
-          "refId": "A",
-          "select": [
-            [
-              {
-                "params": [
-                  "value"
-                ],
-                "type": "column"
-              }
-            ]
-          ],
-          "timeColumn": "time",
-          "where": [
-            {
-              "name": "$__timeFilter",
-              "params": [],
-              "type": "macro"
-            }
-          ]
-        }
-      ],
-      "title": "📚 Topic Diversity Metrics",
-      "type": "bargauge"
-    },
-    {
-      "datasource": {
-        "type": "postgres",
-        "uid": "Postgres"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "fillOpacity": 80,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineWidth": 1,
-            "scaleDistribution": {
-              "type": "linear"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 5,
-        "x": 5,
-        "y": 29
-      },
-      "id": 24,
-      "options": {
-        "barRadius": 0,
-        "barWidth": 0.97,
-        "groupWidth": 0.7,
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "right",
-          "showLegend": true
-        },
-        "orientation": "auto",
-        "showValue": "never",
-        "stacking": "none",
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        },
-        "xTickLabelRotation": 0,
-        "xTickLabelSpacing": 0
-      },
-      "pluginVersion": "9.2.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "Postgres"
-          },
-          "format": "time_series",
-          "group": [],
-          "metricColumn": "none",
-          "rawQuery": true,
-          "rawSql": "WITH last_sim AS (SELECT run_id FROM capsim.simulation_runs ORDER BY start_time DESC LIMIT 1)\nSELECT \n  t.created_at as time,\n  t.topic as metric,\n  COUNT(*) as value\nFROM capsim.trends t\nWHERE t.simulation_id = (SELECT run_id FROM last_sim)\n  AND t.created_at IS NOT NULL\n  AND $__timeFilter(t.created_at)\nGROUP BY t.created_at, t.topic\nORDER BY time",
-          "refId": "A",
-          "select": [
-            [
-              {
-                "params": [
-                  "value"
-                ],
-                "type": "column"
-              }
-            ]
-          ],
-          "timeColumn": "time",
-          "where": [
-            {
-              "name": "$__timeFilter",
-              "params": [],
-              "type": "macro"
-            }
-          ]
-        }
-      ],
-      "title": "⏱️ Topic Activity Over Time",
-      "type": "barchart"
-    },
-    {
-      "datasource": {
-        "type": "postgres",
-        "uid": "Postgres"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
             "mode": "palette-classic"
           },
           "custom": {
@@ -1635,10 +1617,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 9,
         "w": 6,
-        "x": 10,
-        "y": 29
+        "x": 5,
+        "y": 31
       },
       "id": 27,
       "options": {
@@ -1707,6 +1689,88 @@
       "fieldConfig": {
         "defaults": {
           "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 5,
+        "x": 11,
+        "y": 31
+      },
+      "id": 30,
+      "options": {
+        "displayMode": "basic",
+        "minVizHeight": 10,
+        "minVizWidth": 0,
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [],
+          "fields": "",
+          "values": true
+        },
+        "showUnfilled": true
+      },
+      "pluginVersion": "9.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "Postgres"
+          },
+          "format": "table",
+          "group": [],
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "WITH last_sim AS (SELECT run_id FROM capsim.simulation_runs ORDER BY start_time DESC LIMIT 1)\nSELECT \n  'Unique Topics' as metric,\n  COUNT(DISTINCT t.topic) as value\nFROM capsim.trends t\nWHERE t.simulation_id = (SELECT run_id FROM last_sim)\n\nUNION ALL\n\nSELECT \n  'Posts per Topic Avg' as metric,\n  ROUND((COUNT(t.trend_id)::NUMERIC / NULLIF(COUNT(DISTINCT t.topic), 0)), 1) as value\nFROM capsim.trends t\nWHERE t.simulation_id = (SELECT run_id FROM last_sim)\n\nUNION ALL\n\nSELECT \n  'Most Popular Topic Posts' as metric,\n  COALESCE(MAX(topic_count), 0) as value\nFROM (\n  SELECT COUNT(*) as topic_count\n  FROM capsim.trends t\n  WHERE t.simulation_id = (SELECT run_id FROM last_sim)\n  GROUP BY t.topic\n) topic_stats",
+          "refId": "A",
+          "select": [
+            [
+              {
+                "params": [
+                  "value"
+                ],
+                "type": "column"
+              }
+            ]
+          ],
+          "timeColumn": "time",
+          "where": [
+            {
+              "name": "$__timeFilter",
+              "params": [],
+              "type": "macro"
+            }
+          ]
+        }
+      ],
+      "title": "📚 Topic Diversity Metrics",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "Postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
             "mode": "thresholds"
           },
           "mappings": [],
@@ -1733,9 +1797,9 @@
       },
       "gridPos": {
         "h": 3,
-        "w": 4,
+        "w": 5,
         "x": 0,
-        "y": 38
+        "y": 40
       },
       "id": 16,
       "options": {
@@ -1787,6 +1851,6 @@
   "timezone": "",
   "title": "Events Table Real-time Monitoring",
   "uid": "events-realtime",
-  "version": 46,
+  "version": 50,
   "weekStart": ""
 }
