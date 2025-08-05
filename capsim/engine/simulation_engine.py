@@ -2027,6 +2027,17 @@ class SimulationEngine:
             # Сохраняем события
             self._aggregated_events.append(update)
             
+        elif update_type == "person_state":
+            # Агрегируем обновления состояния агентов для simulation_participants
+            agent_id = str(update["id"])
+            if agent_id not in self._aggregated_updates:
+                self._aggregated_updates[agent_id] = {"id": update["id"]}
+            
+            # Обновляем tracking атрибуты
+            for key, value in update.items():
+                if key in ['last_post_ts', 'last_selfdev_ts', 'last_purchase_ts', 'purchases_today']:
+                    self._aggregated_updates[agent_id][key] = value
+            
     def should_schedule_future_event(self, timestamp: float) -> bool:
         """
         Проверяет, следует ли планировать событие на указанное время.
@@ -2054,7 +2065,8 @@ class SimulationEngine:
             len(self._aggregated_history) +
             len(self._aggregated_trends) +
             len(self._aggregated_trend_creations) +
-            len(self._aggregated_events)
+            len(self._aggregated_events) +
+            len(self._aggregated_updates)
         )
         
         if total_updates >= self.batch_size: # self.batch_size is 1000 from settings
@@ -2186,6 +2198,7 @@ class SimulationEngine:
         self._aggregated_trends.clear()
         self._aggregated_trend_creations.clear()
         self._aggregated_events.clear()
+        self._aggregated_updates.clear()  # Очищаем обновления simulation_participants
         self._last_batch_commit = self.current_time
         
     async def archive_inactive_trends(self) -> None:
