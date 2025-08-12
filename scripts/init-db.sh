@@ -36,4 +36,10 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-E
 EOSQL
 
 echo "CAPSIM database initialization completed successfully!"
-echo "Created users: capsim_rw (read-write), capsim_ro (read-only)" 
+echo "Created users: capsim_rw (read-write), capsim_ro (read-only)"
+
+# Setup external clients if script exists
+if [ -f "/docker-entrypoint-initdb.d/setup_external_clients.sh" ]; then
+    echo "Setting up external client permissions..."
+    DOCKER_ENV=true /docker-entrypoint-initdb.d/setup_external_clients.sh
+fi 
