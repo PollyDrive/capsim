@@ -6,7 +6,7 @@ datasources:
     access: proxy
     url: postgres:5432
     user: postgres
-    password: postgres_password
+    password: capsim321
     database: capsim_db
     isDefault: true
     editable: true

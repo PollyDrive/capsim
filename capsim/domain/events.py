@@ -149,7 +149,11 @@ class PublishPostAction(BaseEvent):
         
         # ИСПРАВЛЕНИЕ: Более реалистичная базовая виральность
         # Базовая виральность зависит от социального статуса агента и его экспертизы в теме
-        topic_affinity = agent.get_affinity_for_topic(self.topic)
+        # Создаем простой контекст для передачи affinity_map
+        simple_context = type('SimpleContext', (), {
+            'affinity_map': getattr(engine, 'affinity_map', {})
+        })()
+        topic_affinity = agent.get_affinity_for_topic(self.topic, simple_context)
         expertise_bonus = (topic_affinity / 5.0) * 0.5  # Бонус до 0.5
         
         base_virality = min(3.0,  # Максимум 3.0 для базовой виральности
@@ -1057,6 +1061,11 @@ class TrendInfluenceEvent(BaseEvent):
         audience_size = int(len(engine.agents) * trend.get_coverage_factor())
         potential_audience = random.sample(engine.agents, min(len(engine.agents), audience_size))
         
+        # Создаем простой контекст для передачи affinity_map  
+        simple_context = type('SimpleContext', (), {
+            'affinity_map': getattr(engine, 'affinity_map', {})
+        })()
+        
         # 2. Обрабатываем влияние на каждого "увидевшего" агента
         update_states = []
         response_actions = []
@@ -1077,10 +1086,10 @@ class TrendInfluenceEvent(BaseEvent):
                     "profession": agent.profession,
                     "trend_id": str(trend.trend_id),
                     "agent_trend_receptivity": agent.trend_receptivity,
-                    "agent_affinity_for_topic": agent.get_affinity_for_topic(trend.topic),
+                    "agent_affinity_for_topic": agent.get_affinity_for_topic(trend.topic, simple_context),
                     "timestamp": self.timestamp
                 }, default=str))
-            if agent.trend_receptivity > 0.1 and agent.get_affinity_for_topic(trend.topic) >= 1.0:
+            if agent.trend_receptivity > 0.1 and agent.get_affinity_for_topic(trend.topic, simple_context) >= 1.0:
                 # Определяем соответствие интересов
                 from capsim.common.topic_mapping import topic_to_interest_category
                 try:

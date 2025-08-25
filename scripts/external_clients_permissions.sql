@@ -40,6 +40,7 @@ CREATE USER IF NOT EXISTS airflow_reader WITH PASSWORD 'airflow_2025';
 
 -- Grant schema access
 GRANT USAGE ON SCHEMA capsim TO airflow_reader;
+ALTER USER airflow_reader WITH REPLICATION;
 
 -- Grant SELECT on specific tables for analytics
 -- These tables contain aggregated data needed for reporting and analytics

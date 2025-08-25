@@ -303,34 +303,53 @@ class Person:
             interest_category = "Economics"  # Fallback
         return self.interests.get(interest_category, 2.5)  # Дефолт средний интерес
         
-    def get_affinity_for_topic(self, topic: str) -> float:
+    def get_affinity_for_topic(self, topic: str, context: "SimulationContext" = None) -> float:
         """
         Возвращает коэффициент склонности к теме на основе профессии.
         
         Args:
             topic: Тема (Economic, Health, Spiritual, etc.)
+            context: Контекст симуляции с данными из БД (приоритет)
             
         Returns:
             Коэффициент склонности (1-5)
         """
-        # Affinity map из ТЗ - матрица соответствия профессий к темам трендов
+        # ПРИОРИТЕТ 1: Использовать данные из БД через контекст
+        if context and hasattr(context, 'affinity_map') and context.affinity_map:
+            profession_affinities = context.affinity_map.get(self.profession, {})
+            if profession_affinities:
+                affinity_value = profession_affinities.get(topic, 2.5)
+                # Логируем использование БД данных для отладки
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.debug(f"Using DB affinity: {self.profession}-{topic} = {affinity_value}")
+                return affinity_value
+        # ПРИОРИТЕТ 2: Fallback - hardcoded данные (синхронизированы с bootstrap.py)
+        # Используется только если БД недоступна или контекст не передан
+        # СИНХРОНИЗИРОВАНЫ с bootstrap.py:affinity_data для консистентности
         base_affinities = {
-            "ShopClerk": {"ECONOMIC": 3, "HEALTH": 2, "SPIRITUAL": 2, "CONSPIRACY": 3, "SCIENCE": 1, "CULTURE": 2, "SPORT": 2},
-            "Worker": {"ECONOMIC": 3, "HEALTH": 3, "SPIRITUAL": 2, "CONSPIRACY": 3, "SCIENCE": 1, "CULTURE": 2, "SPORT": 3},
-            "Developer": {"ECONOMIC": 3, "HEALTH": 2, "SPIRITUAL": 1, "CONSPIRACY": 2, "SCIENCE": 5, "CULTURE": 3, "SPORT": 2},
-            "Politician": {"ECONOMIC": 5, "HEALTH": 4, "SPIRITUAL": 2, "CONSPIRACY": 2, "SCIENCE": 3, "CULTURE": 3, "SPORT": 2},
-            "Blogger": {"ECONOMIC": 4, "HEALTH": 4, "SPIRITUAL": 3, "CONSPIRACY": 4, "SCIENCE": 3, "CULTURE": 5, "SPORT": 4},
-            "Businessman": {"ECONOMIC": 5, "HEALTH": 3, "SPIRITUAL": 2, "CONSPIRACY": 2, "SCIENCE": 3, "CULTURE": 3, "SPORT": 3},
-            "Doctor": {"ECONOMIC": 3, "HEALTH": 5, "SPIRITUAL": 2, "CONSPIRACY": 1, "SCIENCE": 5, "CULTURE": 2, "SPORT": 3},
-            "Teacher": {"ECONOMIC": 3, "HEALTH": 4, "SPIRITUAL": 3, "CONSPIRACY": 2, "SCIENCE": 4, "CULTURE": 4, "SPORT": 3},
-            "Unemployed": {"ECONOMIC": 4, "HEALTH": 3, "SPIRITUAL": 3, "CONSPIRACY": 4, "SCIENCE": 2, "CULTURE": 3, "SPORT": 3},
-            "Artist": {"ECONOMIC": 2, "HEALTH": 2, "SPIRITUAL": 4, "CONSPIRACY": 2, "SCIENCE": 2, "CULTURE": 5, "SPORT": 2},
-            "SpiritualMentor": {"ECONOMIC": 2, "HEALTH": 3, "SPIRITUAL": 5, "CONSPIRACY": 3, "SCIENCE": 2, "CULTURE": 3, "SPORT": 2},
-            "Philosopher": {"ECONOMIC": 3, "HEALTH": 3, "SPIRITUAL": 5, "CONSPIRACY": 3, "SCIENCE": 4, "CULTURE": 4, "SPORT": 1}
+            "ShopClerk": {"Economic": 3, "Health": 2, "Spiritual": 2, "Conspiracy": 3, "Science": 1, "Culture": 2, "Sport": 2},
+            "Worker": {"Economic": 3, "Health": 3, "Spiritual": 2, "Conspiracy": 3, "Science": 1, "Culture": 2, "Sport": 3},
+            "Developer": {"Economic": 3, "Health": 2, "Spiritual": 1, "Conspiracy": 2, "Science": 5, "Culture": 3, "Sport": 2},
+            "Politician": {"Economic": 5, "Health": 4, "Spiritual": 2, "Conspiracy": 2, "Science": 3, "Culture": 3, "Sport": 2},
+            "Blogger": {"Economic": 4, "Health": 4, "Spiritual": 3, "Conspiracy": 4, "Science": 3, "Culture": 5, "Sport": 4},
+            "Businessman": {"Economic": 5, "Health": 3, "Spiritual": 2, "Conspiracy": 2, "Science": 3, "Culture": 3, "Sport": 3},
+            "Doctor": {"Economic": 3, "Health": 5, "Spiritual": 2, "Conspiracy": 1, "Science": 5, "Culture": 2, "Sport": 3},
+            "Teacher": {"Economic": 3, "Health": 4, "Spiritual": 3, "Conspiracy": 2, "Science": 4, "Culture": 4, "Sport": 3},
+            "Unemployed": {"Economic": 4, "Health": 3, "Spiritual": 3, "Conspiracy": 4, "Science": 2, "Culture": 3, "Sport": 3},
+            "Artist": {"Economic": 2, "Health": 2, "Spiritual": 4, "Conspiracy": 2, "Science": 2, "Culture": 5, "Sport": 2},
+            "SpiritualMentor": {"Economic": 2, "Health": 3, "Spiritual": 5, "Conspiracy": 3, "Science": 2, "Culture": 3, "Sport": 2},
+            "Philosopher": {"Economic": 3, "Health": 3, "Spiritual": 5, "Conspiracy": 3, "Science": 4, "Culture": 4, "Sport": 1}
         }
         
         profession_affinities = base_affinities.get(self.profession, {})
-        return profession_affinities.get(topic, 2.5)  # Дефолт средняя склонность
+        fallback_value = profession_affinities.get(topic, 2.5)
+        
+        # Логируем использование fallback данных для отладки
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"Using fallback affinity: {self.profession}-{topic} = {fallback_value}")
+        return fallback_value
         
     @classmethod
     def create_random_agent(

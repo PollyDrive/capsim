@@ -6,7 +6,7 @@ Senior Database Developer role implementation.
 Выполняет:
 1. Создание схемы capsim
 2. Применение alembic миграций
-3. Загрузка seed данных из trend_affinity.json
+3. Загрузка affinity данных из hardcoded конфигурации
 4. Генерация 1000 глобальных агентов с русскими именами
 5. Инициализация базовых трендов
 """
