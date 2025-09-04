@@ -8,11 +8,8 @@ services:
     env_file:
       - .env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://capsim_rw:${CAPSIM_RW_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      - DATABASE_URL_RO=postgresql+asyncpg://capsim_ro:${CAPSIM_RO_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL_RO=${DATABASE_URL_RO}
       - CAPSIM_RW_PASSWORD=${CAPSIM_RW_PASSWORD}
       - CAPSIM_RO_PASSWORD=${CAPSIM_RO_PASSWORD}
       - DOCKER_ENV=true
@@ -31,9 +28,9 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    depends_on:
-      postgres:
-        condition: service_healthy
+    # depends_on:
+    #   postgres:
+    #     condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
       interval: 60s
@@ -44,33 +41,33 @@ services:
       - ./logs:/app/logs
       - ./config:/app/config
 
-  postgres:
-    image: postgres:15
-    ports:
-      - "5432:5432"
-    env_file:
-      - .env
-    environment:
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - CAPSIM_RW_PASSWORD=${CAPSIM_RW_PASSWORD}
-      - CAPSIM_RO_PASSWORD=${CAPSIM_RO_PASSWORD}
-    labels:
-      logging: "promtail"
-      service.name: "capsim-postgres"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
-      - ./scripts/setup_external_clients.sh:/docker-entrypoint-initdb.d/setup_external_clients.sh:ro
-      - ./monitoring/postgresql.conf:/etc/postgresql/postgresql.conf:ro
-    command: 
-      ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+  # postgres:
+  #   image: postgres:15
+  #   ports:
+  #     - "5432:5432"
+  #   env_file:
+  #     - .env
+  #   environment:
+  #     - POSTGRES_DB=${POSTGRES_DB}
+  #     - POSTGRES_USER=${POSTGRES_USER}
+  #     - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+  #     - CAPSIM_RW_PASSWORD=${CAPSIM_RW_PASSWORD}
+  #     - CAPSIM_RO_PASSWORD=${CAPSIM_RO_PASSWORD}
+  #   labels:
+  #     logging: "promtail"
+  #     service.name: "capsim-postgres"
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #     - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
+  #     - ./scripts/setup_external_clients.sh:/docker-entrypoint-initdb.d/setup_external_clients.sh:ro
+  #     - ./monitoring/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+  #   command: 
+  #     ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+  #     interval: 5s
+  #     timeout: 5s
+  #     retries: 5
 
       
 
@@ -172,9 +169,9 @@ services:
     ports:
       - "9187:9187"
     environment:
-      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
-    depends_on:
-      - postgres
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}?sslmode=disable"
+    # depends_on:
+    #   - postgres
     networks:
       - default
 

@@ -564,4 +564,4 @@ class Person:
         logger.info(f"Agent {self.id} ({self.profession}) chose action: {selected} from {names} with weights {weights}")
         
         # Возвращаем имя действия как строку
-        return selected 
+        return selected

@@ -14,9 +14,11 @@ def get_database_url():
     db_url = os.getenv("DATABASE_URL")
     if not db_url:
         print("Переменная окружения DATABASE_URL не установлена.")
-        # Для локального запуска скрипта напрямую, а не через `capsim run`
-        default_url = "postgresql://capsim_rw:capsim321@localhost:5432/capsim_db"
-        print(f"Используется URL по умолчанию: {default_url}")
+        # Use environment-aware fallback
+        sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+        from capsim.common.environment import get_fallback_database_url
+        default_url = get_fallback_database_url()
+        print(f"Используется environment-aware fallback URL: {default_url}")
         db_url = default_url
     
     # pandas + postgresql требуют драйвер psycopg2, а не asyncpg

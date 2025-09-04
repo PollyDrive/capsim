@@ -4,10 +4,10 @@ datasources:
   - name: Postgres
     type: postgres
     access: proxy
-    url: postgres:5432
-    user: postgres
-    password: capsim321
-    database: capsim_db
+    url: ${POSTGRES_HOST}:${POSTGRES_PORT}
+    user: ${POSTGRES_USER}
+    password: ${POSTGRES_PASSWORD}
+    database: ${POSTGRES_DB}
     isDefault: true
     editable: true
     jsonData:
